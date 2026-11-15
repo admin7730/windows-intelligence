@@ -4,7 +4,7 @@ Windows 11 的语音、截图和文字助手。识别在本机完成，问答可
 
 ## 安装与初次配置
 
-1. 在 [Releases](https://github.com/admin7730/windows-intelligence/releases) 下载 `WindowsIntelligence-0.2.38-x64.zip`。适用于 Windows 11 22H2 或更新版本的 x64 电脑。
+1. 在 [Releases](https://github.com/admin7730/windows-intelligence/releases) 下载 `WindowsIntelligence-0.2.39-x64.zip`。适用于 Windows 11 22H2 或更新版本的 x64 电脑。
 2. 解压整个 ZIP，双击 `Install-MSIX.cmd`。首次安装会请求管理员批准。脚本核对 MSIX 的签名和证书，把项目的公开证书加入「本地计算机 → 受信任的人」，然后为当前 Windows 用户安装应用。
 3. 从开始菜单启动 **Windows Intelligence**，双击通知区域的图标打开设置。在「模型服务」输入你自己的 DeepSeek API Key 并保存。也可添加兼容 Chat Completions 的服务。
 4. 在「语音朗读」中，可选择本地 Kokoro、MiniMax 或 ElevenLabs。使用云端朗读时，在同一页填写对应的 API Key。语音识别模型已包含在安装包中。

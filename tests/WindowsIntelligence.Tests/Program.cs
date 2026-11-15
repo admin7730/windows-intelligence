@@ -2,10 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -98,6 +101,7 @@ internal static class Program
                 return;
             }
             await Check("Copilot URI and event gate", ActivationTest);
+            await Check("Single-instance activation and pipe access denial", SingleInstanceTest);
             await Check("Windows global assistant shortcut and fallback", GlobalShortcutTest);
             await Check("Shot state transitions and duplicate submission", StateTest);
             await Check("Multimodal request, SSE and vision capability", ApiTest);
@@ -147,6 +151,40 @@ internal static class Program
         Require(gate.Resolve(Activation.Tap, 700) == Activation.Tap && gate.Resolve(Activation.Tap, 1250) == Activation.Tap,
             "independent single presses");
         return Task.CompletedTask;
+    }
+
+    private static async Task SingleInstanceTest()
+    {
+        string scope = "test-" + Guid.NewGuid().ToString("N");
+        using var server = new SingleInstance(scope);
+        Require(server.IsPrimary, "test server did not acquire the mutex");
+        var received = new TaskCompletionSource<Activation>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ = server.ListenAsync(message => received.TrySetResult(message));
+
+        var forwarded = await Task.Run(() =>
+        {
+            using var client = new SingleInstance(scope);
+            return !client.IsPrimary && client.Forward(Activation.Open);
+        });
+        Require(forwarded && await received.Task.WaitAsync(TimeSpan.FromSeconds(3)) == Activation.Open,
+            "the secondary launch did not deliver the settings activation to the same user");
+
+        string blockedScope = "test-" + Guid.NewGuid().ToString("N");
+        using var blocked = new SingleInstance(blockedScope);
+        using var identity = WindowsIdentity.GetCurrent();
+        var user = identity.User!;
+        var denied = new PipeSecurity();
+        denied.SetOwner(user);
+        denied.AddAccessRule(new PipeAccessRule(user, PipeAccessRights.WriteData, AccessControlType.Deny));
+        denied.AddAccessRule(new PipeAccessRule(user, PipeAccessRights.FullControl, AccessControlType.Allow));
+        using var inaccessible = NamedPipeServerStreamAcl.Create(blocked.PipeName, PipeDirection.In, 1,
+            PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, denied);
+        var rejected = await Task.Run(() =>
+        {
+            using var client = new SingleInstance(blockedScope);
+            return !client.IsPrimary && !client.Forward(Activation.Open);
+        });
+        Require(rejected, "a permission-denied pipe must return failure without crashing the secondary launch");
     }
 
     private static Task StateTest()

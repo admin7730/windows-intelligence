@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using Microsoft.Win32;
 using Windows.ApplicationModel.AppExtensions;
 using Windows.System;
@@ -169,42 +171,76 @@ internal static class Copilot
 
 internal sealed class SingleInstance : IDisposable
 {
-    private readonly string pipeName = $"WindowsIntelligence-{Process.GetCurrentProcess().SessionId}-{System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value}";
+    private readonly SecurityIdentifier user;
+    private readonly PipeSecurity pipeSecurity = new();
     private readonly Mutex mutex;
     private readonly CancellationTokenSource stopping = new();
-    public bool IsPrimary { get; }
+    internal string PipeName { get; }
+    public bool IsPrimary { get; private set; }
 
-    public SingleInstance()
+    public SingleInstance(string? appId)
     {
-        mutex = new Mutex(true, $@"Local\{pipeName}", out bool primary);
+        using var identity = WindowsIdentity.GetCurrent();
+        user = identity.User ?? throw new InvalidOperationException("The current token has no user SID.");
+        PipeName = $"WindowsIntelligence-{Process.GetCurrentProcess().SessionId}-{user}-{appId ?? "unpackaged"}";
+
+        // CurrentUserOnly in .NET 10 compares token owners, which can differ for the same account.
+        pipeSecurity.SetOwner(user);
+        pipeSecurity.AddAccessRule(new PipeAccessRule(
+            new SecurityIdentifier(WellKnownSidType.NetworkSid, null), PipeAccessRights.FullControl, AccessControlType.Deny));
+        pipeSecurity.AddAccessRule(new PipeAccessRule(user, PipeAccessRights.FullControl, AccessControlType.Allow));
+
+        var mutexSecurity = new MutexSecurity();
+        mutexSecurity.SetOwner(user);
+        mutexSecurity.AddAccessRule(new MutexAccessRule(user, MutexRights.FullControl, AccessControlType.Allow));
+        mutex = MutexAcl.Create(true, $@"Local\{PipeName}", out bool primary, mutexSecurity);
         IsPrimary = primary;
     }
 
-    public void Forward(Activation activation)
+    public bool TryTakeOver()
     {
-        using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.CurrentUserOnly);
-        try { pipe.Connect(2500); pipe.WriteByte((byte)activation); }
-        catch (IOException) { }
-        catch (TimeoutException) { }
+        if (IsPrimary) return true;
+        try { return IsPrimary = mutex.WaitOne(0); }
+        catch (AbandonedMutexException) { return IsPrimary = true; }
+    }
+
+    public bool Forward(Activation activation)
+    {
+        using var pipe = new NamedPipeClientStream(".", PipeName,
+            PipeAccessRights.WriteData | PipeAccessRights.ReadPermissions | PipeAccessRights.Synchronize,
+            PipeOptions.None, TokenImpersonationLevel.Identification, HandleInheritability.None);
+        try
+        {
+            pipe.Connect(2500);
+            if (!user.Equals(pipe.GetAccessControl().GetOwner(typeof(SecurityIdentifier)))) return false;
+            pipe.WriteByte((byte)activation);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException) { return false; }
     }
 
     public async Task ListenAsync(Action<Activation> dispatch)
     {
-        while (!stopping.IsCancellationRequested)
+        var token = stopping.Token;
+        var data = new byte[1];
+        while (!token.IsCancellationRequested)
         {
-            using var server = new NamedPipeServerStream(pipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             try
             {
-                await server.WaitForConnectionAsync(stopping.Token).ConfigureAwait(false);
-                using var read = CancellationTokenSource.CreateLinkedTokenSource(stopping.Token);
+                using var server = NamedPipeServerStreamAcl.Create(PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous, 0, 0, pipeSecurity);
+                await server.WaitForConnectionAsync(token).ConfigureAwait(false);
+                using var read = CancellationTokenSource.CreateLinkedTokenSource(token);
                 read.CancelAfter(800);
-                var data = new byte[1];
                 if (await server.ReadAsync(data, read.Token).ConfigureAwait(false) == 1 && data[0] <= (byte)Activation.Background)
                     dispatch((Activation)data[0]);
             }
             catch (OperationCanceledException) { }
-            catch (IOException) { }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                try { await Task.Delay(200, token).ConfigureAwait(false); }
+                catch (OperationCanceledException) { }
+            }
         }
     }
 
@@ -213,5 +249,6 @@ internal sealed class SingleInstance : IDisposable
         stopping.Cancel();
         if (IsPrimary) mutex.ReleaseMutex();
         mutex.Dispose();
+        stopping.Dispose();
     }
 }

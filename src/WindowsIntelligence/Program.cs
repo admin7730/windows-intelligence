@@ -26,11 +26,18 @@ internal static class Program
         }
         var activation = Copilot.FromLaunch(args);
         if (!activation.HasValue) return;
-        using var instance = new SingleInstance();
+        using var instance = new SingleInstance(Copilot.GetAumid());
         if (!instance.IsPrimary)
         {
-            instance.Forward(activation.Value);
-            return;
+            if (activation == Activation.Background || instance.Forward(activation.Value)) return;
+            if (!instance.TryTakeOver())
+            {
+                Environment.ExitCode = 1;
+                if (activation == Activation.Open)
+                    MessageBox.Show("无法连接到已运行的 Windows Intelligence。请从任务栏通知区域退出应用后重新打开。",
+                        "Windows Intelligence", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
         }
 
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
