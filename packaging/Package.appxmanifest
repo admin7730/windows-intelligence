@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 desktop rescap">
+  <Identity Name="WindowsIntelligence.Desktop" Publisher="CN=Windows Intelligence Development" Version="0.2.38.0" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>Windows Intelligence</DisplayName>
+    <PublisherDisplayName>Windows Intelligence</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22621.0" MaxVersionTested="10.0.26100.0" /></Dependencies>
+  <Resources><Resource Language="en-us" /><Resource Language="zh-cn" /></Resources>
+  <Applications>
+    <Application Id="App" Executable="WindowsIntelligence.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Windows Intelligence" Description="Voice and screen assistant for Windows" BackgroundColor="transparent" Square44x44Logo="Assets\Square44x44Logo.png" Square150x150Logo="Assets\Square150x150Logo.png" />
+      <Extensions>
+        <uap:Extension Category="windows.protocol">
+          <uap:Protocol Name="windowsintelligence-copilot"><uap:DisplayName>Windows Intelligence Copilot Key</uap:DisplayName></uap:Protocol>
+        </uap:Extension>
+        <uap3:Extension Category="windows.appExtension">
+          <uap3:AppExtension Name="com.microsoft.windows.copilotkeyprovider" Id="WindowsIntelligence" DisplayName="Windows Intelligence" Description="Voice and screen assistant for Windows" PublicFolder="Public">
+            <uap3:Properties>
+              <SingleTap MessageWParam="0">windowsintelligence-copilot://?state=Tap</SingleTap>
+              <PressAndHoldStart MessageWParam="1">windowsintelligence-copilot://?state=Down</PressAndHoldStart>
+              <PressAndHoldStop MessageWParam="2">windowsintelligence-copilot://?state=Up</PressAndHoldStop>
+            </uap3:Properties>
+          </uap3:AppExtension>
+        </uap3:Extension>
+        <desktop:Extension Category="windows.startupTask" Executable="WindowsIntelligence.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="WindowsIntelligenceStartup" Enabled="false" DisplayName="Windows Intelligence" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities><Capability Name="internetClient" /><uap3:Capability Name="userNotificationListener" /><rescap:Capability Name="runFullTrust" /><DeviceCapability Name="microphone" /><DeviceCapability Name="webcam" /></Capabilities>
+</Package>

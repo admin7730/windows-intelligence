@@ -1,0 +1,12 @@
+.tooling/
+artifacts/
+**/obj/
+**/bin/
+*.pfx
+*.p12
+*.pem
+*.key
+*.user
+.env
+.env.*
+**/node_modules/

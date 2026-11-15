@@ -1,0 +1,588 @@
+using System.Runtime.InteropServices;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Interop;
+using System.Windows.Input;
+using InputKey = System.Windows.Input.Key;
+using System.Windows.Media;
+using Windows.ApplicationModel;
+
+namespace WindowsIntelligence;
+
+internal sealed class SettingsWindow : Window
+{
+    private static readonly Brush Canvas = Ui.Brush("#101824"), Rail = Ui.Brush("#131F31"), Surface = Ui.Brush("#19283C");
+    private static readonly Brush Selected = Ui.Brush("#233E51"), Line = Ui.Brush("#304359"), Ink = Ui.Brush("#ECF3FC");
+    private static readonly Brush Muted = Ui.Brush("#AAC0D5"), Accent = Ui.Brush("#7AE6CE");
+    private static readonly FontFamily GlyphFont = new("Segoe Fluent Icons, Segoe MDL2 Assets");
+    private readonly Settings model;
+    private readonly Interaction interaction;
+    private readonly int fastPath;
+    private readonly AssistantHotkey? shortcut;
+    private readonly Overlay overlay;
+    private readonly TextBlock status = Ui.Text("", 13, Accent);
+    private readonly StackPanel page = new();
+    private readonly List<Action> save = [];
+    private readonly ListBox list = new();
+    private readonly ScrollViewer scroll;
+    private readonly TextBlock title = Ui.Text("", 28, Ink, true);
+    private readonly TextBlock group = Ui.Text("", 12, Muted, true);
+    private CancellationTokenSource? microphoneTest;
+    private AssistantShortcut? shortcutDraft;
+    internal bool IsRecordingShortcut { get; private set; }
+    private int tab;
+    private static readonly string[] Pages = ["总览", "语音球", "液态玻璃", "屏幕边缘", "粒子", "唤醒快捷键", "截图", "语音识别", "模型服务", "视觉输入", "语音朗读", "性能", "隐私与历史", "关于"];
+    private static readonly string[] Icons = ["\uE80F", "\uE91F", "\uE790", "\uE7F4", "\uE945", "\uE765", "\uE722", "\uE720",
+        "\uE968", "\uE91B", "\uE767", "\uE9D9", "\uE72E", "\uE946"];
+    private static readonly (string Name, int[] Pages)[] Sections =
+    [
+        ("", [0]),
+        ("交互", [7, 10, 5, 6]),
+        ("服务与隐私", [8, 9, 12]),
+        ("外观与性能", [1, 2, 3, 4, 11]),
+        ("", [13])
+    ];
+
+    public SettingsWindow(Settings model, Interaction interaction, Overlay overlay, int fastPath, AssistantHotkey? shortcut = null)
+    {
+        this.model = model; this.interaction = interaction; this.overlay = overlay; this.fastPath = fastPath;
+        this.shortcut = shortcut;
+        Title = "Windows Intelligence"; Width = 1000; Height = 744; MinWidth = 790; MinHeight = 540;
+        FontFamily = Ui.Body; FontSize = 14;
+        Background = Canvas; Foreground = Ink; WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        Resources.MergedDictionaries.Add(new ResourceDictionary
+        {
+            Source = new Uri("/WindowsIntelligence;component/SettingsTheme.xaml", UriKind.Relative)
+        });
+        Resources["SettingsCanvas"] = Canvas; Resources["SettingsSurface"] = Surface; Resources["SettingsSelected"] = Selected;
+        Resources["SettingsLine"] = Line; Resources["SettingsInk"] = Ink; Resources["SettingsMuted"] = Muted;
+        Resources["SettingsAccent"] = Accent;
+        SourceInitialized += (_, _) =>
+        {
+            int useDarkMode = 1;
+            _ = DwmSetWindowAttribute(new WindowInteropHelper(this).Handle, 20, ref useDarkMode, sizeof(int));
+        };
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible) return;
+            microphoneTest?.Cancel();
+            IsRecordingShortcut = false;
+        };
+        var layout = new Grid { Background = Canvas };
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(228) });
+        layout.ColumnDefinitions.Add(new ColumnDefinition());
+        var side = new DockPanel { LastChildFill = true };
+        var brandLabel = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        brandLabel.Children.Add(Ui.Text("Windows Intelligence", 15, Ink, true));
+        brandLabel.Children.Add(Ui.Text("设置", 12, Muted));
+        var mark = NavGlyph("\uE720", 17);
+        mark.HorizontalAlignment = HorizontalAlignment.Center;
+        mark.VerticalAlignment = VerticalAlignment.Center;
+        mark.Foreground = Accent;
+        var brand = Ui.Row(new Border { Child = mark, Width = 35, Height = 35, Background = Selected,
+            CornerRadius = new CornerRadius(10), Margin = new Thickness(0, 0, 10, 0) }, brandLabel);
+        brand.Margin = new Thickness(16, 19, 8, 17);
+        DockPanel.SetDock(brand, Dock.Top); side.Children.Add(brand);
+        list.Background = Brushes.Transparent; list.BorderThickness = new Thickness(0); list.Padding = new Thickness(10, 0, 10, 12);
+        ScrollViewer.SetHorizontalScrollBarVisibility(list, ScrollBarVisibility.Disabled);
+        foreach (var section in Sections)
+        {
+            if (section.Name.Length > 0)
+            {
+                var label = Ui.Text(section.Name, 11, Muted, true);
+                var divider = new ListBoxItem { Content = label, Focusable = false, IsHitTestVisible = false,
+                    Padding = new Thickness(10, 9, 8, 2) };
+                divider.Style = (Style)FindResource("SettingsNavItem");
+                list.Items.Add(divider);
+            }
+            foreach (int index in section.Pages)
+            {
+                var glyph = NavGlyph(Icons[index], 14);
+                glyph.Margin = new Thickness(0, 0, 10, 0);
+                var label = new TextBlock { Text = Pages[index], VerticalAlignment = VerticalAlignment.Center };
+                var item = new ListBoxItem { Tag = index, Content = Ui.Row(glyph, label), Style = (Style)FindResource("SettingsNavItem") };
+                System.Windows.Automation.AutomationProperties.SetName(item, Pages[index]);
+                list.Items.Add(item);
+            }
+        }
+        side.Children.Add(list);
+        layout.Children.Add(new Border { Child = side, Background = Rail, BorderThickness = new Thickness(0, 0, 1, 0), BorderBrush = Line });
+        var main = new DockPanel();
+        Grid.SetColumn(main, 1); layout.Children.Add(main);
+        title.FontFamily = Ui.Display;
+        var header = new StackPanel { Margin = new Thickness(27, 19, 20, 13) };
+        header.Children.Add(group);
+        header.Children.Add(title);
+        DockPanel.SetDock(header, Dock.Top); main.Children.Add(header);
+        var footer = new DockPanel { Margin = new Thickness(27, 10, 20, 10) };
+        var saveButton = ActionButton("保存设置", () => Save(), true);
+        DockPanel.SetDock(saveButton, Dock.Right); footer.Children.Add(saveButton);
+        status.VerticalAlignment = VerticalAlignment.Center; footer.Children.Add(status);
+        var footerBorder = new Border { Child = footer, Background = Rail, BorderBrush = Line, BorderThickness = new Thickness(0, 1, 0, 0) };
+        DockPanel.SetDock(footerBorder, Dock.Bottom); main.Children.Add(footerBorder);
+        page.Margin = new Thickness(27, 1, 20, 10);
+        scroll = new ScrollViewer { Content = page, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        main.Children.Add(scroll);
+        Content = layout;
+        OverlayUi.AsToolWindow(this);
+        list.SelectionChanged += (_, _) =>
+        {
+            if (list.SelectedItem is not ListBoxItem { Tag: int index }) return;
+            microphoneTest?.Cancel();
+            tab = index;
+            Render();
+            scroll.ScrollToTop();
+            GlassMotion.Reveal(page, model.ReduceMotion, 4, 145);
+        };
+        Navigate(0);
+    }
+
+    private void RecognitionPage()
+    {
+        var devices = new List<(string Id, string Name)> { ("", "Windows 默认输入设备") };
+        devices.AddRange(SpeechRecognizer.Microphones());
+        int index = devices.FindIndex(device => device.Id == model.MicrophoneDeviceId);
+        if (index < 0)
+        {
+            index = devices.Count;
+            devices.Add((model.MicrophoneDeviceId, "已保存的设备暂不可用"));
+        }
+        Choose("麦克风", devices.Select(device => device.Name).ToArray(), index, value => model.MicrophoneDeviceId = devices[value].Id);
+        Check("唤醒后开启麦克风", model.MicrophoneEnabled, value => model.MicrophoneEnabled = value);
+        Check("高准确率复核", model.AccurateSpeech, value => model.AccurateSpeech = value);
+        Add(Ui.Text(SpeechRecognizer.HasAccurateModel
+            ? "使用 Qwen3-ASR 核对完整发言，支持普通话、粤语、英语及中英混说。关闭后使用响应更快的 SenseVoice。"
+            : "当前使用 SenseVoice 复核。安装新版完整安装包后可使用 Qwen3-ASR。", 12, Muted));
+        Number("说话结束判定（毫秒）", Math.Max(1500, model.Silence), 1500, 4000, value => model.Silence = (int)value);
+
+        var meter = new UniformGrid { Rows = 1, Columns = 20, Margin = new Thickness(0, 3, 0, 12) };
+        var bars = Enumerable.Range(0, 20).Select(_ => new Border
+        {
+            Height = 7, CornerRadius = new CornerRadius(2), Background = Line, Margin = new Thickness(0, 0, 3, 0)
+        }).ToArray();
+        foreach (var bar in bars) meter.Children.Add(bar);
+        var result = Ui.Text("说一句平时会用的指令，听完后这里会显示最终转写。", 13, Muted);
+        result.MinHeight = 36;
+        var start = ActionButton("开始试录", primary: true);
+        var stop = ActionButton("停止", () => microphoneTest?.Cancel());
+        start.Click += (_, _) => Run(Test());
+        stop.IsEnabled = false;
+        var content = new StackPanel();
+        content.Children.Add(meter);
+        content.Children.Add(result);
+        content.Children.Add(Ui.Row(start, stop));
+        Card("试录麦克风", "试录仅在本机转写。识别出的文字留在此处。", content);
+
+        void Level(float value)
+        {
+            int on = (int)Math.Ceiling(value * bars.Length);
+            for (int i = 0; i < bars.Length; i++) bars[i].Background = i < on ? Accent : Line;
+        }
+
+        async Task Test()
+        {
+            if (microphoneTest is not null || !Save()) return;
+            if (!model.MicrophoneEnabled) { result.Text = "请先开启麦克风。"; return; }
+            using var test = microphoneTest = new CancellationTokenSource();
+            start.IsEnabled = false; stop.IsEnabled = true;
+            result.Text = "正在聆听…";
+            void Show(Action update) => Dispatcher.InvokeAsync(() => { if (!test.IsCancellationRequested) update(); });
+            try
+            {
+                string text = await interaction.PreviewRecognitionAsync(value => Show(() => Level(value)),
+                    text => Show(() => result.Text = text), () => Show(() => result.Text = "正在核对识别结果…"), test.Token);
+                result.Text = text.Length > 0 ? text : "没有检测到说话声。请检查输入设备和音量后重试。";
+            }
+            catch (OperationCanceledException) when (test.IsCancellationRequested) { result.Text = "试录已停止。"; }
+            catch (Exception ex) { result.Text = ex is UserError ? ex.Message : "无法完成试录。请检查 Windows 输入设备和麦克风权限。"; }
+            finally
+            {
+                Level(0);
+                start.IsEnabled = true; stop.IsEnabled = false;
+                microphoneTest = null;
+            }
+        }
+    }
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(nint window, int attribute, ref int value, int size);
+
+    private void Navigate(int index)
+    {
+        var item = list.Items.OfType<ListBoxItem>().Single(entry => entry.Tag is int pageIndex && pageIndex == index);
+        list.SelectedItem = item;
+        list.ScrollIntoView(item);
+    }
+
+    public void ShowShortcutSettings() => Navigate(5);
+
+    private static TextBlock NavGlyph(string code, int size) =>
+        new() { Text = code, FontFamily = GlyphFont, FontSize = size, VerticalAlignment = VerticalAlignment.Center };
+
+    private static Button ActionButton(string title, Action? action = null, bool primary = false)
+    {
+        var button = Ui.Button(title, () => action?.Invoke(), primary);
+        button.Background = primary ? Accent : Rail;
+        button.BorderBrush = primary ? Accent : Line;
+        button.Foreground = primary ? Canvas : Ink;
+        System.Windows.Automation.AutomationProperties.SetName(button, title);
+        return button;
+    }
+
+    private void Render()
+    {
+        IsRecordingShortcut = false;
+        status.Text = ""; save.Clear(); page.Children.Clear();
+        string section = Sections.Single(entry => entry.Pages.Contains(tab)).Name;
+        group.Text = section.Length > 0 ? section : "Windows Intelligence";
+        title.Text = Pages[tab];
+        switch (tab)
+        {
+            case 0:
+                string wakeKey = shortcut?.Active?.ToString() ?? "Copilot 键";
+                Card("语音与屏幕助手", $"短按 {wakeKey} 说话，说完后自动提交。双击静默输入，长按截屏。",
+                    Ui.Row(ActionButton("开始语音", () => { Hide(); interaction.Start(false); }, true),
+                        ActionButton("输入问题", () => { Hide(); interaction.Start(false, typed: true); }),
+                        ActionButton("截图提问", () => { Hide(); Dispatcher.InvokeAsync(() => interaction.Start(true)); })));
+                Card("当前服务", $"{model.Provider.Name}  ·  {model.Provider.TextModel}", ActionButton("配置模型服务", () => Navigate(8)));
+                Label("操作电脑");
+                Check("允许助手自动操作电脑", model.PowerShellEnabled, v => model.PowerShellEnabled = v);
+                Add(Ui.Text("在语音或文字对话中提出操作请求后，助手会直接使用当前 Windows 账户执行。命令输出会发给当前 AI 服务。", 12, Ui.Muted));
+                Card("启动与托盘", "登录 Windows 后保持 Copilot 键可用。",
+                    Ui.Row(ActionButton("启用开机启动", () => Run(SetStartup(true))), ActionButton("关闭开机启动", () => Run(SetStartup(false)))));
+                Check("显示系统托盘图标（下次启动）", model.Tray, v => model.Tray = v);
+                Card("唤醒快捷键", $"当前使用 {wakeKey}。", ActionButton("更改快捷键", ShowShortcutSettings));
+                break;
+            case 1:
+                Number("球体尺寸 (DIP)", model.OrbSize, 96, 240, v => model.OrbSize = (int)v);
+                Choose("球体位置", new[] { "顶部", "上方", "下方", "右下" }, model.OrbPosition, v => model.OrbPosition = v);
+                Number("音频灵敏度", model.Sensitivity, .2, 3, v => model.Sensitivity = v);
+                Number("动画速度", model.AnimationSpeed, .25, 2.5, v => model.AnimationSpeed = v);
+                break;
+            case 2:
+                Number("玻璃不透明度", model.Glass, .30, 1, v => model.Glass = v);
+                Number("球内背景模糊与高光柔化", model.Blur, 0, 1, v => model.Blur = v);
+                Add(Ui.Text($"Windows Host Backdrop · {overlay.BackdropStatus}", 12, Ui.Dim));
+                Number("渐变色偏移", model.Palette, 0, 1, v => model.Palette = v);
+                break;
+            case 3:
+                Check("唤醒时显示屏幕边缘光效", model.Edge, v => model.Edge = v);
+                Number("发光强度", model.Glow, 0, 1.6, v => model.Glow = v);
+                break;
+            case 4:
+                Check("启用 GPU 实例化粒子", model.Particles, v => model.Particles = v);
+                Number("最大粒子数", model.ParticleCount, 0, 240, v => model.ParticleCount = (int)v);
+                break;
+            case 5: CopilotPage(); break;
+            case 6:
+                Choose("截图目标", new[] { "鼠标所在显示器", "主显示器", "所有显示器", "活动窗口", "手动选择区域" }, (int)model.Target, v => model.Target = (CaptureTarget)v);
+                Number("松开后等待语音 (ms)", model.VoiceWait, 300, 10000, v => model.VoiceWait = (int)v);
+                Check("松开键时立即结束录音", model.Strict, v => model.Strict = v);
+                Check("显示截图缩略图", model.Preview, v => model.Preview = v);
+                Multiline("默认截图提示词", model.ScreenshotPrompt, v => model.ScreenshotPrompt = v);
+                break;
+            case 7: RecognitionPage(); break;
+            case 8: AiPage(); break;
+            case 9:
+                Field("视觉模型", model.Provider.VisionModel, v => model.Provider.VisionModel = v);
+                Check("所选视觉模型支持图像", model.Provider.SupportsVision, v => model.Provider.SupportsVision = v);
+                Choose("图像格式", ["PNG", "JPEG"], model.ImageFormat == "JPEG" ? 1 : 0, v => model.ImageFormat = v == 1 ? "JPEG" : "PNG");
+                var details = new[] { "original", "high", "auto", "low" };
+                Choose("视觉细节等级", details, Math.Max(0, Array.IndexOf(details, model.ImageDetail)), v => model.ImageDetail = details[v]);
+                Number("JPEG 质量", model.JpegQuality, 50, 100, v => model.JpegQuality = (int)v);
+                Number("图像长边上限 (px)", model.MaxImageSide, 768, 16000, v => model.MaxImageSide = (int)v);
+                break;
+            case 10: TtsPage(); break;
+            case 11:
+                Choose("渲染质量", ["低", "均衡", "高", "极高"], (int)model.Quality, v => model.Quality = (Quality)v);
+                Check("根据帧耗时降低粒子数量", model.Adaptive, v => model.Adaptive = v);
+                Check("减少动画", model.ReduceMotion, v => model.ReduceMotion = v);
+                Add(Ui.Text(overlay.Failure ?? "Direct3D 11 · DirectComposition", 14, Ui.Muted));
+                break;
+            case 12: PrivacyPage(); break;
+            case 13:
+                Card($"Windows Intelligence {typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3)}", "Windows 11 x64 · WPF · Direct3D 11 · Windows Graphics Capture · sherpa-onnx", Ui.Text(Copilot.GetAumid() ?? "本地调试进程", 13, Ui.Muted));
+                break;
+        }
+    }
+
+    private void CopilotPage()
+    {
+        shortcutDraft = model.Shortcut;
+        var record = ActionButton("录制快捷键");
+        var selection = Ui.Text("", 13, Ink, true);
+        var restore = ActionButton("恢复 Copilot 键", () =>
+        {
+            shortcutDraft = null;
+            FinishRecording();
+        });
+        var controls = new StackPanel();
+        selection.Margin = new Thickness(0, 0, 0, 10);
+        controls.Children.Add(selection);
+        controls.Children.Add(Ui.Row(record, restore));
+        FinishRecording();
+        record.Click += (_, _) =>
+        {
+            IsRecordingShortcut = true;
+            record.Content = "请按下快捷键";
+            selection.Text = "录制中。按 Esc 取消。";
+            record.Focus();
+        };
+        record.LostKeyboardFocus += (_, _) => FinishRecording();
+        record.PreviewKeyDown += (_, e) =>
+        {
+            if (!IsRecordingShortcut) return;
+            InputKey key = e.Key == InputKey.System ? e.SystemKey : e.Key;
+            if (key == InputKey.Tab && Keyboard.Modifiers == ModifierKeys.None) return;
+            e.Handled = true;
+            if (key == InputKey.Escape && Keyboard.Modifiers == ModifierKeys.None) { FinishRecording(); return; }
+            if (e.IsRepeat) return;
+            int virtualKey = KeyInterop.VirtualKeyFromKey(key);
+            if (virtualKey is 0 or 0x10 or 0x11 or 0x12 or 0x5B or 0x5C or >= 0xA0 and <= 0xA5) return;
+            var candidate = new AssistantShortcut(Keyboard.Modifiers, virtualKey);
+            if (!candidate.IsValid)
+            {
+                selection.Text = "请按功能键或组合键，例如 Ctrl + Alt + Space。";
+                return;
+            }
+            shortcutDraft = candidate;
+            FinishRecording();
+        };
+        Card("助手唤醒", "默认使用 Copilot 键。保存后，短按开启语音，双击进入静默输入，长按截图。", controls);
+
+        var details = Ui.Text("", 13, Ui.Muted);
+        Card("Windows Copilot 键", "使用默认按键时，在 Windows 的 Copilot 键设置中选择 Windows Intelligence。",
+            Ui.Row(ActionButton("打开 Windows 按键选择器", Copilot.OpenSettings, true), ActionButton("诊断注册", () => Run(Update()))));
+        Add(details);
+        Run(Update());
+        async Task Update() => details.Text = await Copilot.DiagnoseAsync(fastPath);
+
+        void FinishRecording()
+        {
+            IsRecordingShortcut = false;
+            record.Content = "录制快捷键";
+            string configured = shortcutDraft?.ToString() ?? "Copilot 键";
+            string active = shortcut?.Active?.ToString() ?? "Copilot 键";
+            selection.Text = configured == active ? $"当前使用 {active}" : $"待保存 {configured} · 当前使用 {active}";
+        }
+    }
+
+    private void AiPage()
+    {
+        var provider = model.Provider;
+        Providers(model.Providers, p => p.Name, provider, p => model.ActiveProvider = p.Id, () => { var p = new ProviderSettings { Name = "自定义服务", BaseUrl = "", TextModel = "", VisionModel = "", SupportsVision = false }; model.Providers.Add(p); model.ActiveProvider = p.Id; });
+        Field("服务名称", provider.Name, v => provider.Name = v);
+        Field("API 基础地址", provider.BaseUrl, v => provider.BaseUrl = v);
+        Key(provider.Id);
+        Field("文本模型", provider.TextModel, v => provider.TextModel = v);
+        Field("视觉模型", provider.VisionModel, v => provider.VisionModel = v);
+        Check("启用文本输入", provider.SupportsText, v => provider.SupportsText = v);
+        Check("所选模型支持流式输出", provider.SupportsStreaming, v => provider.SupportsStreaming = v);
+        Check("所选模型支持工具调用", provider.SupportsTools, v => provider.SupportsTools = v);
+        Check("请求流式回复", provider.Streaming, v => provider.Streaming = v);
+        Number("温度", provider.Temperature, 0, 2, v => provider.Temperature = v);
+        Number("回复 Token 上限", provider.MaxTokens, 1, 32768, v => provider.MaxTokens = (int)v);
+        Number("请求超时 (秒)", provider.TimeoutSeconds, 5, 300, v => provider.TimeoutSeconds = (int)v);
+        Multiline("系统提示词", provider.SystemPrompt, v => provider.SystemPrompt = v);
+        Add(ActionButton("保存并测试连接", () => Run(Test())));
+        async Task Test()
+        {
+            if (!Save()) return;
+            using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            try { status.Text = await new AiClient().TestAsync(provider, SecretStore.Get(provider.Id), ct.Token); }
+            catch (OperationCanceledException) { status.Text = "连接测试超时。"; }
+        }
+    }
+
+    private void TtsPage()
+    {
+        var provider = model.TtsProvider;
+        Choose("朗读模式", ["关闭", "本地 Kokoro", "自定义 API", "ElevenLabs", "MiniMax（HD → Turbo）"], (int)model.Tts, v => model.Tts = (TtsMode)v);
+        Check("自动朗读回复", model.AutoSpeak, v => model.AutoSpeak = v);
+        Check("助手打开时播放提示音", model.Cue, v => model.Cue = v);
+        Number("语速", model.TtsSpeed, .5, 2, v => model.TtsSpeed = v);
+        Field("MiniMax 音色", model.MiniMaxVoice, v => model.MiniMaxVoice = v);
+        Key(MiniMaxSpeech.CredentialId, "MiniMax API Key · Windows 凭据管理器");
+        Add(Ui.Text("MiniMax 默认使用 Speech-2.8-HD，失败后自动使用 Speech-2.8-Turbo。朗读文本会发送到 MiniMax。", 12, Ui.Muted));
+        Field("ElevenLabs Voice ID", model.ElevenLabsVoice, v => model.ElevenLabsVoice = v);
+        Field("ElevenLabs 模型", model.ElevenLabsModel, v => model.ElevenLabsModel = v);
+        Key(ElevenLabsSpeech.CredentialId, "ElevenLabs API Key · Windows 凭据管理器");
+        Add(Ui.Text("选择 ElevenLabs 后，待朗读的文本会发送到 api.elevenlabs.io。", 12, Ui.Muted));
+        Number("Kokoro 声音编号（41–52 为中文声音）", model.LocalVoice, 0, 53, v => model.LocalVoice = (int)v);
+        Providers(model.TtsProviders, p => p.Name, provider, p => model.ActiveTtsProvider = p.Id, () => { var p = new TtsProviderSettings { Name = "自定义朗读" }; model.TtsProviders.Add(p); model.ActiveTtsProvider = p.Id; });
+        Field("服务名称", provider.Name, v => provider.Name = v);
+        Field("自定义语音 API 完整地址", provider.Url, v => provider.Url = v);
+        Key(provider.Id);
+        Field("模型名称", provider.Model, v => provider.Model = v);
+        Field("声音 ID", provider.Voice, v => provider.Voice = v);
+        Choose("音频格式", ["wav", "mp3"], provider.Format == "mp3" ? 1 : 0, v => provider.Format = v == 1 ? "mp3" : "wav");
+        Number("采样率 (0 代表服务默认值)", provider.SampleRate, 0, 192000, v => provider.SampleRate = (int)v);
+        Add(ActionButton("保存并试听", () => { if (Save()) Run(interaction.PreviewTtsAsync()); }));
+    }
+
+    private void PrivacyPage()
+    {
+        Check("截图授权后自动发送", model.AutoSend, v => model.AutoSend = v);
+        Check("在内存中保留最近一张截图用于下一轮", model.ImageHistory, v => { model.ImageHistory = v; if (!v) interaction.ClearImages(); });
+        Check("在本机保存文本对话历史", model.SaveTextHistory, v => { if (!v && model.SaveTextHistory) interaction.ClearHistory(); model.SaveTextHistory = v; });
+        string endpoint;
+        try { endpoint = AiEndpoint.Create(model.Provider.BaseUrl).Authority; }
+        catch (UserError) { endpoint = "当前服务地址无效"; }
+        Card("截图发送授权", $"截图可能包含私人信息。手动发送时可先预览与遮挡。启用自动发送后，主动截图会发送到 {endpoint}。",
+            Ui.Row(ActionButton("同意向此服务自动发送", () => Update(() => model.ScreenshotConsent = model.DestinationKey), true),
+                ActionButton("撤销授权", () => Update(() => { model.ScreenshotConsent = null; interaction.ClearImages(); }))));
+        Add(Ui.Row(ActionButton("清除图片上下文", () => { interaction.ClearImages(); status.Text = "已清除图片上下文。"; }),
+            ActionButton("清除对话历史", () => { interaction.ClearHistory(); status.Text = "已清除历史。"; }), ActionButton("查看文本历史", ShowHistory)));
+    }
+
+    private async Task SetStartup(bool enable)
+    {
+        if (Copilot.GetAumid() is null) throw new UserError("开机启动需要已安装的 MSIX 包身份。");
+        var task = await StartupTask.GetAsync("WindowsIntelligenceStartup");
+        if (enable) status.Text = $"Windows 开机启动状态：{await task.RequestEnableAsync()}";
+        else { task.Disable(); status.Text = "已关闭开机启动。"; }
+    }
+
+    private void ShowHistory()
+    {
+        var history = new Window { Owner = this, Title = "Windows Intelligence · 历史", Width = 680, Height = 560,
+            Content = new TextBox { Text = interaction.HistoryText, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
+                Background = Ui.Night, Foreground = Ui.Ink, Padding = new Thickness(18), FontSize = 15, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } };
+        history.SourceInitialized += (_, _) => Desktop.Exclude(history);
+        history.Show();
+    }
+
+    private void Providers<T>(IReadOnlyList<T> items, Func<T, string> name, T active, Action<T> select, Action add)
+    {
+        var menu = new ComboBox { ItemsSource = items.Select(name).ToArray(), SelectedIndex = items.ToList().IndexOf(active), Width = 225, Height = 31, Margin = new Thickness(0, 0, 9, 0) };
+        menu.SelectionChanged += (_, _) => { if (menu.SelectedIndex >= 0) Update(() => select(items[menu.SelectedIndex])); };
+        Add(Ui.Row(menu, ActionButton("添加服务", () => Update(add))));
+    }
+
+    private void Update(Action update)
+    {
+        if (!Save()) return;
+        try { update(); model.Save(); Render(); }
+        catch (Exception ex) { status.Text = ex.Message; }
+    }
+
+    private void Card(string title, string detail, UIElement tail)
+    {
+        var box = new StackPanel();
+        box.Children.Add(Ui.Text(title, 18, Ink, true));
+        var label = Ui.Text(detail, 13, Muted); label.Margin = new Thickness(0, 5, 0, 13);
+        box.Children.Add(label); box.Children.Add(tail);
+        page.Children.Add(new Border { Child = box, Padding = new Thickness(17), Background = Surface, BorderBrush = Line,
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Margin = new Thickness(0, 0, 0, 12) });
+    }
+
+    private void Add(FrameworkElement item)
+    {
+        item.Margin = new Thickness(0, 0, 0, 11);
+        item.HorizontalAlignment = item is CheckBox or TextBlock ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+        page.Children.Add(item);
+    }
+
+    private void Label(string title) { var label = Ui.Text(title, 13, Muted, true); label.Margin = new Thickness(0, 1, 0, 6); page.Children.Add(label); }
+
+    private void SettingRow(string title, Control input)
+    {
+        var row = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(input, Dock.Right);
+        row.Children.Add(input);
+        var label = Ui.Text(title, 14, Ink);
+        label.Margin = new Thickness(0, 3, 12, 3);
+        label.VerticalAlignment = VerticalAlignment.Center;
+        row.Children.Add(label);
+        page.Children.Add(new Border { Child = row, Padding = new Thickness(12, 7, 10, 7), Background = Surface,
+            BorderBrush = Line, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(9), Margin = new Thickness(0, 0, 0, 9) });
+    }
+
+    private TextBox Box(string title, string value)
+    {
+        Label(title);
+        var box = new TextBox { Text = value, MaxWidth = 620, MinHeight = 34, Foreground = Ink,
+            Background = Canvas, BorderBrush = Line, Padding = new Thickness(9, 5, 9, 5), CaretBrush = Accent };
+        System.Windows.Automation.AutomationProperties.SetName(box, title);
+        box.Margin = new Thickness(0, 0, 0, 12);
+        box.HorizontalAlignment = HorizontalAlignment.Stretch;
+        page.Children.Add(box);
+        return box;
+    }
+
+    private void Field(string title, string value, Action<string> set) { var box = Box(title, value); save.Add(() => set(box.Text.Trim())); }
+    private void Multiline(string title, string value, Action<string> set)
+    {
+        var box = Box(title, value); box.Height = 83; box.AcceptsReturn = true; box.TextWrapping = TextWrapping.Wrap;
+        box.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; save.Add(() => set(box.Text.Trim()));
+    }
+
+    private void Number(string title, double value, double min, double max, Action<double> set)
+    {
+        var box = new TextBox { Text = value.ToString(System.Globalization.CultureInfo.InvariantCulture), Width = 96, MinHeight = 33,
+            VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Right,
+            Background = Canvas, Foreground = Ink, BorderBrush = Line, CaretBrush = Accent, Padding = new Thickness(8, 3, 8, 3) };
+        System.Windows.Automation.AutomationProperties.SetName(box, title);
+        SettingRow(title, box);
+        save.Add(() =>
+        {
+            if (!double.TryParse(box.Text, System.Globalization.CultureInfo.InvariantCulture, out var n) || !double.IsFinite(n) || n < min || n > max)
+                throw new UserError($"{title} 的范围是 {min}–{max}。");
+            set(n);
+        });
+    }
+
+    private void Check(string title, bool value, Action<bool> set)
+    {
+        var check = new CheckBox { Content = Ui.Text(title, 14, Ink), IsChecked = value };
+        System.Windows.Automation.AutomationProperties.SetName(check, title);
+        Add(check); save.Add(() => set(check.IsChecked == true));
+    }
+
+    private void Choose(string title, string[] options, int index, Action<int> set)
+    {
+        var box = new ComboBox { ItemsSource = options, SelectedIndex = Math.Clamp(index, 0, options.Length - 1), Width = 248 };
+        System.Windows.Automation.AutomationProperties.SetName(box, title);
+        SettingRow(title, box); save.Add(() => set(box.SelectedIndex));
+    }
+
+    private void Key(Guid id, string label = "API Key · Windows 凭据管理器")
+    {
+        Label(label);
+        var box = new PasswordBox { Password = SecretStore.Get(id), MaxWidth = 620, Height = 34, Foreground = Ink,
+            Background = Canvas, BorderBrush = Line, Padding = new Thickness(9, 5, 9, 5), CaretBrush = Accent };
+        System.Windows.Automation.AutomationProperties.SetName(box, "API Key");
+        box.Margin = new Thickness(0, 0, 0, 12);
+        page.Children.Add(box);
+        save.Add(() => { if (box.Password != SecretStore.Get(id)) SecretStore.Set(id, box.Password); });
+    }
+
+    private bool Save()
+    {
+        try
+        {
+            if (tab == 5 && shortcut is not null)
+            {
+                AssistantShortcut? previous = model.Shortcut;
+                shortcut.Apply(shortcutDraft, () =>
+                {
+                    model.Shortcut = shortcutDraft;
+                    try { model.Save(); }
+                    catch { model.Shortcut = previous; throw; }
+                });
+                Render();
+            }
+            else
+            {
+                foreach (var update in save) update();
+                model.Save();
+            }
+            status.Text = "设置已保存。";
+            return true;
+        }
+        catch (Exception ex) { status.Text = ex.Message; return false; }
+    }
+
+    private void Run(Task work) => Ui.Observe(work, ex => status.Text = ex is HttpRequestException ? "无法连接服务。" : ex.Message);
+}
