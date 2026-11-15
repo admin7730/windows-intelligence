@@ -6,10 +6,12 @@ Windows 11 桌面 AI 助手，通过 Copilot 键或自定义快捷键打开。�
 
 ## 安装与初次配置
 
-1. 在发布页下载 `WindowsIntelligence-<版本>-x64.zip`。适用于 Windows 11 22H2 或更新版本的 x64 设备。
-2. 完整解压，双击 `Install-MSIX.cmd`。首次安装需要管理员批准。脚本会核对 MSIX 与公开证书，将证书加入「本地计算机 → 受信任的人」，并为当前用户安装应用。
+1. 在[发布页](https://github.com/admin7730/windows-intelligence/releases/latest)的 **Assets（资源）** 下下载 `WindowsIntelligence-<版本>-x64.zip`。适用于 Windows 11 22H2 或更新版本的 x64 设备。
+2. 右键 ZIP，选择 **全部解压缩**。打开解压后的文件夹，确认 `Install-MSIX.cmd`、`Install-MSIX.ps1`、`WindowsIntelligence.msix` 和 `WindowsIntelligence-Signing.cer` 在同一目录，再双击 `Install-MSIX.cmd`。首次安装需要管理员批准。脚本会核对 MSIX 与公开证书，将证书加入「本地计算机 → 受信任的人」，并为当前用户安装应用。
 3. 从开始菜单启动 **Windows Intelligence**，双击任务栏通知区域的图标打开设置。在「模型服务」填入 API Key，再点「保存并测试连接」。
 4. 在「唤醒快捷键」打开 Windows 按键选择器，再选择 Windows Intelligence。也可在应用内录制其他全局快捷键。
+
+> GitHub 的 **Code → Download ZIP** 和 **Source code (zip)** 提供源码。请先构建源码，或从发布页的 **Assets（资源）** 下载可直接安装的 ZIP。
 
 ## 使用
 
