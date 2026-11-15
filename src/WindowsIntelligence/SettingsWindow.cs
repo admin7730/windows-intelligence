@@ -449,7 +449,6 @@ internal sealed class SettingsWindow : Window
         var history = new Window { Owner = this, Title = "Windows Intelligence · 历史", Width = 680, Height = 560,
             Content = new TextBox { Text = interaction.HistoryText, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
                 Background = Ui.Night, Foreground = Ui.Ink, Padding = new Thickness(18), FontSize = 15, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } };
-        history.SourceInitialized += (_, _) => Desktop.Exclude(history);
         history.Show();
     }
 

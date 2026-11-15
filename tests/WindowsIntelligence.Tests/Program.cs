@@ -582,8 +582,11 @@ internal static class Program
 
     private static async Task CaptureTest()
     {
-        var fixture = new Window { Title = "Windows Intelligence · Capture fixture", Background = Brushes.Lime, Left = 70, Top = 70,
-            Width = 400, Height = 240, Topmost = true, WindowStyle = WindowStyle.None };
+        var fixture = OverlayUi.Window("Windows Intelligence · Capture fixture");
+        fixture.SizeToContent = SizeToContent.Manual;
+        fixture.Width = 400;
+        fixture.Height = 240;
+        fixture.Background = Brushes.Lime;
         fixture.Show();
         try
         {
@@ -599,11 +602,16 @@ internal static class Program
             const int x = 425, y = 300;
             var included = await ScreenCapture.CaptureAsync(CaptureTarget.CurrentMonitor, screen, h, ct.Token);
             Require(IsGreen(included, x, y), "monitor did not contain fixture");
-            Require(Desktop.SetWindowDisplayAffinity(h, 0x11), "could not set affinity");
+            using (new AppWindowCaptureExclusion())
+            {
+                await Task.Run(Desktop.DwmFlush);
+                var excluded = await ScreenCapture.CaptureAsync(CaptureTarget.CurrentMonitor, screen, h, ct.Token);
+                Require(!IsGreen(excluded, x, y), "assistant tool UI leaked into its own screenshot");
+            }
             await Task.Run(Desktop.DwmFlush);
-            var excluded = await ScreenCapture.CaptureAsync(CaptureTarget.CurrentMonitor, screen, h, ct.Token);
-            Require(!IsGreen(excluded, x, y), "excluded fixture leaked");
-            Console.WriteLine($"Capture {included.PixelWidth}x{included.PixelHeight}, tested affinity at {x},{y}");
+            var restored = await ScreenCapture.CaptureAsync(CaptureTarget.CurrentMonitor, screen, h, ct.Token);
+            Require(IsGreen(restored, x, y), "capture visibility was not restored");
+            Console.WriteLine($"Capture {included.PixelWidth}x{included.PixelHeight}; tool UI visible before and after own capture.");
         }
         finally { fixture.Close(); }
     }
@@ -643,7 +651,8 @@ internal static class Program
             var hit = WindowFromPoint(point);
             var hwnd = render.WindowFor(screen);
             Require(hit != 0 && GetAncestor(hit, 2) != hwnd, $"overlay interferes with pointer hit testing (from {Title(before)} to {Title(hit)}, overlay {hwnd:X})");
-            Require(hwnd != 0 && Desktop.SetWindowDisplayAffinity(hwnd, 0), "test overlay could not be made capturable");
+            Require(hwnd != 0 && Desktop.GetWindowDisplayAffinity(hwnd, out uint affinity) && affinity == 0,
+                "native edge effect is excluded from remote capture");
             Desktop.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x13);
             await Task.Delay(170);
             uint laterEdge = render.ShaderPixel(screen, b.Width / 2, 4);

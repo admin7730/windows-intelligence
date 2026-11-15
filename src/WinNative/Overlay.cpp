@@ -113,7 +113,6 @@ struct Overlay {
         dib = CreateDIBSection(memoryDc, &bitmap, DIB_RGB_COLORS, &dibPixels, nullptr, 0);
         if (!memoryDc || !dib) return HRESULT_FROM_WIN32(GetLastError());
         originalBitmap = SelectObject(memoryDc, dib);
-        SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
         auto hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
             nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context);
         if (FAILED(hr)) return hr;

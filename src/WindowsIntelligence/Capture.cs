@@ -20,6 +20,7 @@ internal static class Desktop
     [DllImport("user32.dll")] public static extern nint GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(nint hwnd, out uint processId);
     [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(nint hwnd, uint affinity);
+    [DllImport("user32.dll")] public static extern bool GetWindowDisplayAffinity(nint hwnd, out uint affinity);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int w, int h, uint flags);
     [DllImport("user32.dll")] private static extern bool ShowWindow(nint hwnd, int command);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern nint FindWindow(string className, string? title);
@@ -31,8 +32,32 @@ internal static class Desktop
     [DllImport("dwmapi.dll")] public static extern int DwmFlush();
     public static Screen CursorScreen => Screen.FromPoint(System.Windows.Forms.Cursor.Position);
     public static nint Monitor(Screen screen) => MonitorFromPoint(new(screen.Bounds.Left + 1, screen.Bounds.Top + 1), 2);
-    public static void Exclude(Window window) => SetWindowDisplayAffinity(new WindowInteropHelper(window).Handle, 0x11);
     public static void ShowNoActivate(Window window) => ShowWindow(new WindowInteropHelper(window).Handle, 8);
+}
+
+internal sealed class AppWindowCaptureExclusion : IDisposable
+{
+    private readonly List<(Window Window, nint Handle)> excluded = [];
+
+    public AppWindowCaptureExclusion()
+    {
+        foreach (Window window in Application.Current.Windows)
+        {
+            var handle = new WindowInteropHelper(window).Handle;
+            if (!window.IsVisible || handle == 0) continue;
+            if (Desktop.GetWindowDisplayAffinity(handle, out uint affinity) && affinity != 0) continue;
+            if (Desktop.SetWindowDisplayAffinity(handle, 0x11)) excluded.Add((window, handle));
+        }
+    }
+
+    public void Dispose()
+    {
+        foreach (var (window, handle) in excluded)
+        {
+            if (new WindowInteropHelper(window).Handle == handle)
+                Desktop.SetWindowDisplayAffinity(handle, 0);
+        }
+    }
 }
 
 internal sealed class ScreenCapture

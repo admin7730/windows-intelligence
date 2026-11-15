@@ -36,7 +36,6 @@ internal static class OverlayUi
             var hwnd = new WindowInteropHelper(window).Handle;
             var style = GetWindowLongPtr(hwnd, -20).ToInt64();
             SetWindowLongPtr(hwnd, -20, (nint)((style | 0x80) & ~0x40000));
-            Desktop.Exclude(window);
         };
     }
 
