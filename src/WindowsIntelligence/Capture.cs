@@ -19,8 +19,6 @@ internal static class Desktop
     [DllImport("user32.dll")] private static extern nint MonitorFromPoint(System.Drawing.Point point, uint flags);
     [DllImport("user32.dll")] public static extern nint GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(nint hwnd, out uint processId);
-    [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(nint hwnd, uint affinity);
-    [DllImport("user32.dll")] public static extern bool GetWindowDisplayAffinity(nint hwnd, out uint affinity);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int w, int h, uint flags);
     [DllImport("user32.dll")] private static extern bool ShowWindow(nint hwnd, int command);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern nint FindWindow(string className, string? title);
@@ -35,27 +33,29 @@ internal static class Desktop
     public static void ShowNoActivate(Window window) => ShowWindow(new WindowInteropHelper(window).Handle, 8);
 }
 
-internal sealed class AppWindowCaptureExclusion : IDisposable
+internal sealed class AppWindowCaptureSuppression : IDisposable
 {
-    private readonly List<(Window Window, nint Handle)> excluded = [];
+    private const uint KeepPlacement = 0x0001 | 0x0002 | 0x0004 | 0x0010; // NOSIZE, NOMOVE, NOZORDER, NOACTIVATE
+    private const uint ShowWindow = 0x0040, HideWindow = 0x0080;
+    private readonly List<(Window Window, nint Handle)> hidden = [];
 
-    public AppWindowCaptureExclusion()
+    public AppWindowCaptureSuppression()
     {
         foreach (Window window in Application.Current.Windows)
         {
             var handle = new WindowInteropHelper(window).Handle;
-            if (!window.IsVisible || handle == 0) continue;
-            if (Desktop.GetWindowDisplayAffinity(handle, out uint affinity) && affinity != 0) continue;
-            if (Desktop.SetWindowDisplayAffinity(handle, 0x11)) excluded.Add((window, handle));
+            if (!window.IsVisible || handle == 0 || !Desktop.IsWindowVisible(handle)) continue;
+            if (Desktop.SetWindowPos(handle, 0, 0, 0, 0, 0, KeepPlacement | HideWindow))
+                hidden.Add((window, handle));
         }
     }
 
     public void Dispose()
     {
-        foreach (var (window, handle) in excluded)
+        foreach (var (window, handle) in hidden)
         {
-            if (new WindowInteropHelper(window).Handle == handle)
-                Desktop.SetWindowDisplayAffinity(handle, 0);
+            if (window.IsVisible && new WindowInteropHelper(window).Handle == handle)
+                Desktop.SetWindowPos(handle, 0, 0, 0, 0, 0, KeepPlacement | ShowWindow);
         }
     }
 }

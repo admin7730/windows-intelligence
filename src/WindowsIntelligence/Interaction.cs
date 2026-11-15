@@ -129,7 +129,7 @@ internal sealed class Interaction : IDisposable
                     throw new UserError("当前活动窗口是 Windows Intelligence。请切换到要分析的窗口。");
                 overlay.Suppress(true);
                 caption.Hide();
-                using var excluded = new AppWindowCaptureExclusion();
+                using var hidden = new AppWindowCaptureSuppression();
                 await Task.Run(Desktop.DwmFlush, token);
                 session.Image = await ScreenCapture.CaptureAsync(settings.Target, session.Screen, foreground, token);
             }

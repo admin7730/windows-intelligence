@@ -580,6 +580,8 @@ internal static class Program
     }
 
 
+    [DllImport("user32.dll")] private static extern bool GetWindowDisplayAffinity(nint hwnd, out uint affinity);
+
     private static async Task CaptureTest()
     {
         var fixture = OverlayUi.Window("Windows Intelligence · Capture fixture");
@@ -602,7 +604,7 @@ internal static class Program
             const int x = 425, y = 300;
             var included = await ScreenCapture.CaptureAsync(CaptureTarget.CurrentMonitor, screen, h, ct.Token);
             Require(IsGreen(included, x, y), "monitor did not contain fixture");
-            using (new AppWindowCaptureExclusion())
+            using (new AppWindowCaptureSuppression())
             {
                 await Task.Run(Desktop.DwmFlush);
                 var excluded = await ScreenCapture.CaptureAsync(CaptureTarget.CurrentMonitor, screen, h, ct.Token);
@@ -651,7 +653,7 @@ internal static class Program
             var hit = WindowFromPoint(point);
             var hwnd = render.WindowFor(screen);
             Require(hit != 0 && GetAncestor(hit, 2) != hwnd, $"overlay interferes with pointer hit testing (from {Title(before)} to {Title(hit)}, overlay {hwnd:X})");
-            Require(hwnd != 0 && Desktop.GetWindowDisplayAffinity(hwnd, out uint affinity) && affinity == 0,
+            Require(hwnd != 0 && GetWindowDisplayAffinity(hwnd, out uint affinity) && affinity == 0,
                 "native edge effect is excluded from remote capture");
             Desktop.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x13);
             await Task.Delay(170);
