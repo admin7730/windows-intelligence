@@ -11,11 +11,7 @@ fxc /nologo /O3 /T vs_5_0 /E VS /Fh SceneVS.h /Vn SceneVS "..\..\src\WinNative\O
 if errorlevel 1 exit /b %errorlevel%
 fxc /nologo /O3 /T ps_5_0 /E PS /Fh ScenePS.h /Vn ScenePS "..\..\src\WinNative\Overlay.hlsl"
 if errorlevel 1 exit /b %errorlevel%
-fxc /nologo /O3 /T vs_5_0 /E ParticleVS /Fh ParticleVS.h /Vn ParticleVSCode "..\..\src\WinNative\Overlay.hlsl"
-if errorlevel 1 exit /b %errorlevel%
-fxc /nologo /O3 /T ps_5_0 /E ParticlePS /Fh ParticlePS.h /Vn ParticlePSCode "..\..\src\WinNative\Overlay.hlsl"
-if errorlevel 1 exit /b %errorlevel%
-cl /nologo /std:c++20 /EHsc /O2 /MT /LD /W4 /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN /DWINRT_NO_SOURCE_LOCATION /utf-8 /I. "..\..\src\WinNative\Capture.cpp" "..\..\src\WinNative\Overlay.cpp" /link /OUT:WinNative.dll d3d11.lib dxgi.lib dcomp.lib dwmapi.lib CoreMessaging.lib windowsapp.lib user32.lib gdi32.lib ole32.lib shell32.lib propsys.lib %*
+cl /nologo /std:c++20 /EHsc /O2 /MT /LD /W4 /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN /utf-8 /I. "..\..\src\WinNative\Capture.cpp" "..\..\src\WinNative\Overlay.cpp" /link /OUT:WinNative.dll d3d11.lib dxgi.lib dcomp.lib dwmapi.lib CoreMessaging.lib windowsapp.lib user32.lib gdi32.lib ole32.lib shell32.lib propsys.lib %*
 set "WI_RESULT=%errorlevel%"
 popd
 exit /b %WI_RESULT%

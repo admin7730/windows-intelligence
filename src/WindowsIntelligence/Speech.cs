@@ -9,6 +9,7 @@ namespace WindowsIntelligence;
 
 internal static class Models
 {
+    internal static string CpuProvider => "cpu:" + Path.Combine(AppContext.BaseDirectory, "SpeechCpu.config");
     public static string Find(string type, string file)
     {
         var local = Path.Combine(Settings.DirectoryPath, "Models", type, file);
@@ -30,6 +31,30 @@ internal sealed class SpeechRecognizer : IDisposable
     private OfflineRecognizer? finalRecognizer;
     private OfflineRecognizer? accurateRecognizer;
     private bool disposed;
+    private readonly IdleModelCache heavyModels;
+
+    internal SpeechRecognizer() => heavyModels = new(ReleaseHeavyModels);
+    internal bool HasHeavyModels { get { lock (sync) return finalRecognizer is not null || accurateRecognizer is not null; } }
+
+    internal Task WarmHeavyAsync(bool accurate, CancellationToken ct) => Task.Run(() =>
+    {
+        using var lease = heavyModels.Acquire();
+        ct.ThrowIfCancellationRequested();
+        lock (sync)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (!accurate || PrepareAccurate() is null) PrepareFinal();
+        }
+    }, ct);
+
+    private void ReleaseHeavyModels()
+    {
+        lock (sync)
+        {
+            accurateRecognizer?.Dispose(); accurateRecognizer = null;
+            finalRecognizer?.Dispose(); finalRecognizer = null;
+        }
+    }
 
     internal OfflineRecognizer? PrepareFinal()
     {
@@ -47,7 +72,7 @@ internal sealed class SpeechRecognizer : IDisposable
             config.ModelConfig.SenseVoice.Language = "auto";
             config.ModelConfig.SenseVoice.UseInverseTextNormalization = 1;
             config.ModelConfig.Tokens = tokens;
-            config.ModelConfig.Provider = "cpu";
+            config.ModelConfig.Provider = Models.CpuProvider;
             config.ModelConfig.NumThreads = Math.Clamp(Environment.ProcessorCount / 4, 2, 4);
             return finalRecognizer = new OfflineRecognizer(config);
         }
@@ -72,13 +97,14 @@ internal sealed class SpeechRecognizer : IDisposable
         config.ModelConfig.Qwen3Asr.Encoder = Path.Combine(directory, "encoder.int8.onnx");
         config.ModelConfig.Qwen3Asr.Decoder = Path.Combine(directory, "decoder.int8.onnx");
         config.ModelConfig.Qwen3Asr.Tokenizer = Path.Combine(directory, "tokenizer");
-        config.ModelConfig.Provider = "cpu";
+        config.ModelConfig.Provider = Models.CpuProvider;
         config.ModelConfig.NumThreads = Math.Clamp(Environment.ProcessorCount / 2, 2, 6);
         return accurateRecognizer = new OfflineRecognizer(config);
     }
 
     internal string FinalizeUtterance(float[] samples, string preview, CancellationToken ct, bool accurate = true)
     {
+        using var lease = heavyModels.Acquire();
         ct.ThrowIfCancellationRequested();
         if (samples.Length < 1600) return preview;
         lock (sync)
@@ -137,10 +163,15 @@ internal sealed class SpeechRecognizer : IDisposable
 
     public Task<string> ListenAsync(Settings settings, bool screenshot, Stopwatch clock, ReleaseSignal release,
         Action<float> energy, Action<string> transcript, Action<bool> listening, CancellationToken ct, Action? finalizing = null)
-        => Task.Run(() => ListenCoreAsync(settings, screenshot, clock, release, energy, transcript, listening, ct, finalizing), ct);
+        => Task.Run(async () =>
+        {
+            using var lease = heavyModels.Acquire();
+            return await ListenCoreAsync(settings, screenshot, clock, release, energy, transcript, listening, ct, finalizing).ConfigureAwait(false);
+        }, ct);
 
     public Task<string> TranscribeFileAsync(string path, Action<int> progress, CancellationToken ct) => Task.Run(() =>
     {
+        using var lease = heavyModels.Acquire();
         using var audio = new AudioFileReader(path);
         ISampleProvider input = audio;
         if (input.WaveFormat.Channels == 2) input = new StereoToMonoSampleProvider(input) { LeftVolume = .5f, RightVolume = .5f };
@@ -248,6 +279,10 @@ internal sealed class SpeechRecognizer : IDisposable
         {
             listening(false);
             var model = Prepare();
+            // Start loading while the microphone is already recording. Do not wait on the UI thread.
+            var warming = WarmHeavyAsync(settings.AccurateSpeech, ct);
+            _ = warming.ContinueWith(task => _ = task.Exception, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
             using var stream = model.CreateStream();
             using var vad = new VoiceActivity();
             var recorded = new List<float>(16_000 * 8);
@@ -295,6 +330,7 @@ internal sealed class SpeechRecognizer : IDisposable
             }
             mic.StopRecording();
             recording = false;
+            heavyModels.SpeechEnded();
             energy(0);
             if (!vad.Started) return "";
             finalizing?.Invoke();
@@ -304,17 +340,26 @@ internal sealed class SpeechRecognizer : IDisposable
             string final = model.GetResult(stream).Text.Trim();
             return FinalizeUtterance(vad.Utterance(recorded), final.Length == 0 ? lastText : final, ct, settings.AccurateSpeech);
         }
-        finally { if (recording) mic.StopRecording(); energy(0); }
+        finally
+        {
+            if (recording) { mic.StopRecording(); heavyModels.SpeechEnded(); }
+            energy(0);
+        }
     }
 
     public void Dispose()
     {
+        heavyModels.Dispose();
         lock (sync)
         {
+            if (disposed) return;
             disposed = true;
             recognizer?.Dispose();
+            recognizer = null;
             finalRecognizer?.Dispose();
+            finalRecognizer = null;
             accurateRecognizer?.Dispose();
+            accurateRecognizer = null;
         }
     }
 }

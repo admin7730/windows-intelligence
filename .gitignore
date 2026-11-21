@@ -10,3 +10,10 @@ artifacts/
 .env
 .env.*
 **/node_modules/
+
+# Local relay state, user data and device backups
+**/relay-state/
+**/settings.json
+**/history.json
+**/*.msix
+**/*.partial

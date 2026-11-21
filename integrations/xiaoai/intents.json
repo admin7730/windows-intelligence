@@ -1,0 +1,12 @@
+{
+  "skill_name_suggestion": "电脑助手",
+  "invocation_examples": ["小爱同学，用电脑助手查询电脑内存占用", "小爱同学，让电脑助手打开电脑上的 VS Code"],
+  "intents": [
+    {"name": "windows_status", "examples": ["查询电脑内存占用", "查看电脑当前状态"]},
+    {"name": "windows_control", "examples": ["打开电脑上的 VS Code", "在电脑桌面创建一个测试文件夹"]},
+    {"name": "qq_files", "examples": ["查看 QQ 最近收到的文件", "检测 QQ 下载目录的新文件"]},
+    {"name": "qq_messages", "examples": ["查看 QQ 的最新通知", "读一下 QQ 最近的消息通知"]},
+    {"name": "windows_result", "examples": ["查看结果", "电脑任务完成了吗", "查询处理结果"]}
+  ],
+  "note": "这是手工配置参考，不冒称平台可直接导入的专有格式；实际创建与意图生效须在平台验证。"
+}

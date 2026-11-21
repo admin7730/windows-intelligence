@@ -8,7 +8,6 @@ namespace WindowsIntelligence;
 
 internal enum CaptureTarget { CurrentMonitor, PrimaryMonitor, AllMonitors, ActiveWindow, SelectRegion }
 internal enum TtsMode { Disabled, Local, Custom, ElevenLabs, MiniMax }
-internal enum Quality { Low, Balanced, High, Ultra }
 
 internal sealed class ProviderSettings
 {
@@ -41,6 +40,8 @@ internal sealed class TtsProviderSettings
 
 internal sealed class Settings
 {
+    public QqDetectionSettings QQ { get; set; } = new();
+    public XiaoAISettings XiaoAI { get; set; } = new();
     public List<ProviderSettings> Providers { get; set; } = [new()];
     public Guid ActiveProvider { get; set; }
     [JsonIgnore] public ProviderSettings Provider => Providers.Find(p => p.Id == ActiveProvider) ?? Providers[0];
@@ -75,20 +76,12 @@ internal sealed class Settings
     public int MaxImageSide { get; set; } = 7680;
     public string ScreenshotPrompt { get; set; } = "请分析这张屏幕截图。先识别画面的主要内容，再解释重要信息。根据截图中的错误、代码、图表、软件或题目给出针对性帮助。不要编造截图中不存在的信息。";
     public bool Edge { get; set; } = true;
-    public bool Particles { get; set; } = true;
     public bool ReduceMotion { get; set; }
     public bool Tray { get; set; } = true;
-    public int OrbSize { get; set; } = 160;
-    public double Glass { get; set; } = 0.94;
-    public double Blur { get; set; } = 0.6;
     public double Glow { get; set; } = 0.87;
     public double Palette { get; set; }
     public double AnimationSpeed { get; set; } = 1;
     public double Sensitivity { get; set; } = 1;
-    public int OrbPosition { get; set; } = 2;
-    public int ParticleCount { get; set; } = 70;
-    public Quality Quality { get; set; } = Quality.Balanced;
-    public bool Adaptive { get; set; } = true;
     public static readonly string DirectoryPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WindowsIntelligence");
     private static string FilePath => Path.Combine(DirectoryPath, "settings.json");
 
@@ -97,6 +90,8 @@ internal sealed class Settings
         try
         {
             var settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new();
+            settings.XiaoAI ??= new();
+            settings.QQ ??= new();
             if (settings.Providers.Count == 0) settings.Providers.Add(new());
             if (settings.TtsProviders.Count == 0) settings.TtsProviders.Add(new());
             return settings;

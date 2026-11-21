@@ -41,6 +41,47 @@ internal static class Program
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         application.Startup += async (_, _) =>
         {
+            if (args.Contains("--official-xiaoai"))
+            {
+                await Check("Official XiaoAI bridge and QQ local detection", OfficialXiaoAITests.RunAsync);
+                application.Shutdown(failed == 0 ? 0 : 1); return;
+            }
+            if (args.Contains("--speech-timing"))
+            {
+                await Check("First playable TTS clip releases results; cancellation and failure", SpeechTimingTests.RunAsync);
+                await Check("Silent-mode streaming execution is unchanged", ExecutionTraceTests.FlowAsync);
+                await Check("Speech cancellation, buffering and native ownership", SpeechResourceTests.RunAsync);
+                application.Shutdown(failed == 0 ? 0 : 1);
+                return;
+            }
+            if (args.Contains("--execution-trace"))
+            {
+                await Check("Live commands, output, errors, cancellation and visible execution trace", ExecutionTraceTests.RunAsync);
+                await Check("Existing assistant pipeline displays live tool execution", ExecutionTraceTests.FlowAsync);
+                await Check("Autonomous PowerShell, file I/O and error recovery", PowerShellTest);
+                application.Shutdown(failed == 0 ? 0 : 1);
+                return;
+            }
+            if (args.Contains("--xiaoai") || args.Contains("--speech-idle"))
+            {
+                await Check("30-second native model lifetime and cancellation policy",IdleModelTests.PolicyAsync);
+                if (args.Contains("--xiaoai")) await Check("XiaoAI coexistence gates (simulated)",XiaoAITests.RunAsync);
+                if (args.Contains("--speech-idle")) await Check("Native models unload and reload with identical recognition",IdleModelTests.NativeAsync);
+                application.Shutdown(failed == 0 ? 0 : 1);
+                return;
+            }
+            if (args.Contains("--speech-memory"))
+            {
+                await Check("Speech memory and output benchmark", SpeechMemoryBenchmark.RunAsync);
+                application.Shutdown(failed == 0 ? 0 : 1);
+                return;
+            }
+            if (args.Contains("--speech-resources"))
+            {
+                await Check("Speech cancellation, buffering and native ownership", SpeechResourceTests.RunAsync);
+                application.Shutdown(failed == 0 ? 0 : 1);
+                return;
+            }
             if (args.Contains("--powershell") || args.Contains("--powershell-live"))
             {
                 if (args.Contains("--powershell-live"))
@@ -106,11 +147,15 @@ internal static class Program
             await Check("Shot state transitions and duplicate submission", StateTest);
             await Check("Multimodal request, SSE and vision capability", ApiTest);
             await Check("Autonomous PowerShell, file I/O and error recovery", PowerShellTest);
+            await Check("Visible execution trace and real-time output", ExecutionTraceTests.RunAsync);
+            await Check("Assistant pipeline with visible live tool execution", ExecutionTraceTests.FlowAsync);
+            await Check("First-clip result timing, failure and ESC", SpeechTimingTests.RunAsync);
             await Check("Credential Manager round trip", CredentialsTest);
             await Check("Local streaming ASR, Chinese and English", AsrTest);
             await Check("Qwen3-ASR final accuracy and speech detection", FinalAsrTest);
             await Check("Local TTS PCM plus Windows device playback", TtsTest);
             await Check("Cloud speech request contracts and MiniMax failover", CloudSpeechTest);
+            await Check("Speech cancellation, buffering and native ownership", SpeechResourceTests.RunAsync);
             await Check("Graphics Capture window and real monitor / own UI exclusion", CaptureTest);
             await Check("DirectComposition presentation and foreground hit testing", OverlayTest);
             await Check("Assistant window and rendered Markdown", AssistantTest);
@@ -318,16 +363,19 @@ internal static class Program
             var handler = new PowerShellTransport(commands, content);
             using var http = new HttpClient(handler);
             var output = new List<string>();
+            var activities = new List<AiActivity>();
             int executions = 0;
             var answer = await new AiClient(http).ReplyAsync(request, "", output.Add, CancellationToken.None, async (command, ct) =>
             {
                 Require(command == commands[executions], "streamed arguments were not reassembled or operations were out of order");
                 executions++;
                 return await PowerShellRunner.RunAsync(command, ct);
-            });
+            }, activities.Add);
             Require(answer == $"已写入并核对：{content}。" && output.SequenceEqual([answer]) &&
                 executions == 3 && handler.Count == 4 && File.ReadAllText(file).Trim() == content,
                 "missing file operation, recovery, or final response");
+            Require(activities.Where(a => a.Command is not null).Select(a => a.Command).SequenceEqual(commands) &&
+                activities.Any(a => a.Status == "正在分析执行结果"), "Tool execution progress was not published in order");
         }
         finally
         {
@@ -362,6 +410,12 @@ internal static class Program
             return result;
         });
         Require(executed && answer.Contains("323") && !answer.StartsWith("PowerShell 已退出"), "live service did not summarize the command result");
+        var speechSegments = System.Threading.Channels.Channel.CreateUnbounded<string>();
+        var sentences = new Sentences(speechSegments.Writer);
+        sentences.Add(answer); sentences.Flush(); speechSegments.Writer.TryComplete();
+        Require(speechSegments.Reader.TryRead(out var opening) && opening.Contains("323"),
+            "The verified numerical result was missing from the first speech segment");
+        Console.WriteLine("Verified result is present in the first speech segment.");
     }
 
     private sealed class PowerShellTransport(string[] commands, string content) : HttpMessageHandler
@@ -639,8 +693,8 @@ internal static class Program
             var point = new System.Drawing.Point(b.Left + b.Width / 2, b.Top + b.Height / 2);
             var before = WindowFromPoint(point);
             Require(before != 0, "no baseline window at mouse point");
-            using var render = new Overlay(new Settings { OrbPosition = 1 });
-            render.SetActive(screen, Mood.Listening);
+            using var render = new Overlay(new Settings());
+            render.SetActive(screen);
             render.Energy = .48f;
             var clock = Stopwatch.StartNew();
             await Task.Delay(1150);
@@ -682,16 +736,19 @@ internal static class Program
             Console.WriteLine($"Edge color samples: {string.Join(", ", edgeColors.Select(pixel => pixel.ToString("X8")))}");
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(7));
             var screenshot = await ScreenCapture.CaptureAsync(CaptureTarget.CurrentMonitor, screen, handle, timeout.Token);
-            var (orbX, orbY, _) = render.Position(screen);
-            var orb = Pixel(screenshot, (int)orbX + 23, (int)orbY - 22);
             var top = Pixel(screenshot, screenshot.PixelWidth / 2, 32);
-            nint dc = GetDC(0);
-            uint desktopPixel = GetPixel(dc, b.Left + (int)orbX + 23, b.Top + (int)orbY - 22);
-            ReleaseDC(0, dc);
-            Console.WriteLine($"GPU frame {render.ShaderPixel(screen, (int)orbX + 23, (int)orbY - 22):X8} orb; composed {string.Join(',', orb)} orb; GDI {desktopPixel:X8}; backdrop {render.BackdropStatus}.");
-            Require(orb.Take(3).Max() - orb.Take(3).Min() > 20, $"orb shader is absent in composed frame: {string.Join(',', orb)}");
+            foreach (var (x, y) in new[] { (.5, .36), (.5, .50), (.5, .64), (.77, .64) })
+            {
+                int px = (int)(b.Width * x), py = (int)(b.Height * y);
+                Require(render.ShaderPixel(screen, px, py) == 0, "retired center overlay is still rendered");
+                Require(Pixel(screenshot, px, py).Take(3).Min() > 245, "center overlay is still visible on the desktop");
+            }
+            render.SetActive(screen);
+            render.Pulse();
+            await Task.Delay(140);
+            Require(render.ShaderPixel(screen, b.Width / 2, b.Height / 2) == 0, "screenshot flash restores the retired center overlay");
             Require(top.Take(3).Min() > 90, "the GPU overlay still draws a separate island");
-            Console.WriteLine($"GPU Present calls/s: {fps:F1}; host DPI {Desktop.GetDpiForWindow(handle)}; Host backdrop {render.BackdropStatus}");
+            Console.WriteLine($"GPU Present calls/s: {fps:F1}; host DPI {Desktop.GetDpiForWindow(handle)}; screen center remains transparent.");
             render.Dismiss();
             await Task.Delay(940);
             var frames = render.Frames;
@@ -712,12 +769,18 @@ internal static class Program
     private static Task SettingsTest()
     {
         var legacy = JsonSerializer.Deserialize<Settings>("""
-            {"Island":false,"IslandAppearance":{"OpenWidth":700},"Media":true,"WritingHotkey":false,"ImageServiceModel":"old-model","Tray":false,"AutoSpeak":false,"Providers":[{"Name":"Test"}]}
+            {"Island":false,"IslandAppearance":{"OpenWidth":700},"Media":true,"WritingHotkey":false,"ImageServiceModel":"old-model","OrbSize":240,"OrbPosition":1,"Particles":true,"ParticleCount":200,"Glass":0.8,"Blur":0.7,"Quality":3,"Adaptive":true,"Edge":false,"Palette":0.4,"Sensitivity":1.8,"AnimationSpeed":1.2,"Tray":false,"AutoSpeak":false,"Providers":[{"Name":"Test"}]}
             """)!;
         Require(!legacy.Tray && !legacy.AutoSpeak && legacy.Providers[0].Name == "Test", "core settings did not survive legacy JSON");
+        Require(!legacy.XiaoAI.Enabled && !legacy.XiaoAI.ComputerControl && !legacy.XiaoAI.SpeakerReply,
+            "legacy settings automatically enabled unverified speaker control");
         Require(!JsonSerializer.Serialize(legacy).Contains("IslandAppearance"), "removed island settings are still serialized");
         Require(!JsonSerializer.Serialize(legacy).Contains("WritingHotkey"), "removed workbench settings are still serialized");
         Require(!JsonSerializer.Serialize(legacy).Contains("ImageServiceModel"), "retired image service settings are still serialized");
+        foreach (string removed in new[] { "OrbSize", "OrbPosition", "Particles", "ParticleCount", "Glass", "Blur", "Quality", "Adaptive" })
+            Require(!JsonSerializer.Serialize(legacy).Contains($"\"{removed}\":"), "retired visual setting is still serialized: " + removed);
+        Require(!legacy.Edge && legacy.Palette == .4 && legacy.Sensitivity == 1.8 && legacy.AnimationSpeed == 1.2,
+            "edge preferences changed during legacy settings migration");
         return Task.CompletedTask;
     }
 
@@ -777,6 +840,7 @@ internal static class Program
         submit!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Require(submitted == "测试静默输入", "silent send did not pass the typed text");
         caption.State("正在操作电脑", "读一下这个文件", "", false, false, "");
+        window.UpdateLayout();
         Require(FindButton(window, "运行 PowerShell") is null && FindButton(window, "关闭") is { IsVisible: true },
             "autonomous operation should keep cancellation available without asking for another approval");
         caption.State("回复完成", "", sample, false, false, "");
@@ -823,7 +887,7 @@ internal static class Program
             draft("临时识别");
             return capture.Task.WaitAsync(token);
         }
-        using var overlay = new Overlay(model, renderOrb: false);
+        using var overlay = new Overlay(model);
         using var caption = new Caption();
         using var interaction = new Interaction(model, Dispatcher.CurrentDispatcher, overlay, caption, new AiClient(http), Capture);
         interaction.Start(false);
@@ -868,7 +932,7 @@ internal static class Program
     private static async Task SettingsVisualTest()
     {
         var model = new Settings { ReduceMotion = true };
-        using var overlay = new Overlay(model, renderOrb: false);
+        using var overlay = new Overlay(model);
         using var caption = new Caption();
         using var interaction = new Interaction(model, Dispatcher.CurrentDispatcher, overlay, caption);
         var window = new SettingsWindow(model, interaction, overlay, 0);
@@ -877,7 +941,15 @@ internal static class Program
         {
             await Task.Delay(120);
             Require(FindButton(window, "输入问题") is { IsVisible: true }, "overview lost the typed assistant entry");
+            foreach (string removed in new[] { "语音球", "液态玻璃", "粒子" })
+                Require(FindNamed<ListBoxItem>(window, removed) is null, "retired visual settings page still exists: " + removed);
             Snapshot("settings-overview.png");
+            var edges = FindNamed<ListBoxItem>(window, "屏幕边缘");
+            Require(edges is not null, "edge settings navigation missing");
+            edges!.IsSelected = true;
+            await Task.Delay(100);
+            Require(FindNamed<CheckBox>(window, "唤醒时显示屏幕边缘光效") is { IsChecked: true }, "edge controls were removed");
+            Snapshot("settings-edge.png");
             var speech = FindNamed<ListBoxItem>(window, "语音识别");
             Require(speech is not null, "speech settings navigation missing");
             speech!.IsSelected = true;
@@ -888,11 +960,52 @@ internal static class Program
             Snapshot("settings-speech.png");
             var shortcuts = FindNamed<ListBoxItem>(window, "唤醒快捷键");
             Require(shortcuts is not null, "shortcut settings navigation missing");
-            shortcuts!.IsSelected = true;
+            window.ShowShortcutSettings();
             await Task.Delay(100);
             Require(FindButton(window, "录制快捷键") is { IsVisible: true } &&
                 FindButton(window, "恢复 Copilot 键") is { IsVisible: true }, "shortcut configuration controls missing");
             Snapshot("settings-shortcut.png");
+            Require(!window.AllowsTransparency && System.Windows.Shell.WindowChrome.GetWindowChrome(window) is not null,
+                "settings must retain hardware composition, resizing and a draggable chrome");
+            foreach (string control in new[] { "关闭设置", "最小化设置", "切换最大化" })
+                Require(FindNamed<Button>(window, control) is { IsVisible: true }, "window control missing: " + control);
+            FindNamed<Button>(window, "切换最大化")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(window.WindowState == WindowState.Maximized, "maximize control failed");
+            FindNamed<Button>(window, "切换最大化")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(window.WindowState == WindowState.Normal, "restore control failed");
+            FindNamed<Button>(window, "最小化设置")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(window.WindowState == WindowState.Minimized, "minimize control failed");
+            window.WindowState = WindowState.Normal;
+            var search = FindNamed<TextBox>(window, "搜索设置");
+            Require(search is not null, "settings search missing");
+            search!.Text = "QQ";
+            Require(FindNamed<ListBoxItem>(window, "QQ 消息与文件") is { Visibility: Visibility.Visible } &&
+                FindNamed<ListBoxItem>(window, "语音识别") is { Visibility: Visibility.Collapsed }, "search does not filter navigation");
+            search.Text = "";
+            var navigation = FindNamed<ListBoxItem>(window, "总览");
+            Require(navigation is not null, "overview navigation missing");
+            navigation!.IsSelected = true;
+            await Task.Delay(50);
+            var toggle = FindNamed<CheckBox>(window, "允许助手自动操作电脑")!;
+            toggle.IsChecked = false;
+            Require(toggle.Template.FindName("Thumb", toggle) is System.Windows.Shapes.Ellipse { RenderTransform: TranslateTransform { X: 0, HasAnimatedProperties: false } },
+                "reduced-motion switch must move immediately without an animation clock");
+            toggle.IsChecked = true;
+            Require(toggle.Template.FindName("Thumb", toggle) is System.Windows.Shapes.Ellipse { RenderTransform: TranslateTransform { X: 17 } }, "switch thumb does not reflect the setting");
+            window.Width = 820; window.Height = 560;
+            await Task.Delay(100);
+            Require(FindButton(window, "保存设置") is { IsVisible: true }, "save action unavailable at minimum window size");
+            Snapshot("settings-compact.png");
+            window.Width = 1040; window.Height = 790;
+            foreach (string name in new[] { "模型服务", "视觉输入", "语音朗读", "性能", "隐私与历史", "关于", "小爱同学", "QQ 消息与文件" })
+            {
+                FindNamed<ListBoxItem>(window, name)!.IsSelected = true;
+                await Task.Delay(30);
+                Require(FindButton(window, "保存设置") is { IsVisible: true }, "page lost save action: " + name);
+            }
+            FindNamed<ListBoxItem>(window, "总览")!.IsSelected = true;
+            await Task.Delay(50);
+            Snapshot("settings-overview.png");
         }
         finally { window.Close(); }
 
@@ -924,9 +1037,6 @@ internal static class Program
     [DllImport("gdi32.dll")] private static extern int GetRgnBox(nint region, out PixelRect rect);
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(nint obj);
     [DllImport("user32.dll")] private static extern nint GetAncestor(nint hwnd, uint flags);
-    [DllImport("user32.dll")] private static extern nint GetDC(nint hwnd);
-    [DllImport("user32.dll")] private static extern int ReleaseDC(nint hwnd, nint dc);
-    [DllImport("gdi32.dll")] private static extern uint GetPixel(nint dc, int x, int y);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(nint hwnd, StringBuilder text, int max);
     private static string Title(nint hwnd) { var title = new StringBuilder(180); GetWindowText(hwnd, title, title.Capacity); return $"{hwnd:X} {title}"; }
     private static byte[] Pixel(System.Windows.Media.Imaging.BitmapSource bitmap, int x, int y)

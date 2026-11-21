@@ -1,0 +1,6 @@
+{
+  "name": "windows-intelligence-elevenlabs-setup",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@elevenlabs/elevenlabs-js": "^2.0.0" }
+}

@@ -23,7 +23,7 @@ internal sealed partial class AppHost
         settings = Settings.Load();
         try { shortcut.Apply(settings.Shortcut); }
         catch (UserError) { } // An unavailable shortcut leaves the Copilot key active.
-        overlay = new Overlay(settings, renderOrb: false);
+        overlay = new Overlay(settings);
         caption = new Caption();
         interaction = new Interaction(settings, app.Dispatcher, overlay, caption);
         if (!settings.Tray) return;

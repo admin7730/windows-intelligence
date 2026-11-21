@@ -1,31 +1,26 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
-#include <dcomp.h>
 #include <wrl/client.h>
 #include <memory>
 #include <cstring>
 #include <array>
 #include <cmath>
-#include "Backdrop.h"
 #include "SceneVS.h"
 #include "ScenePS.h"
-#include "ParticleVS.h"
-#include "ParticlePS.h"
 
 using Microsoft::WRL::ComPtr;
 
 namespace {
 struct Scene {
     float width, height, time, scale;
-    float orbX, orbY, radius, orbOpacity;
-    float energy, mood, edgeOpacity, flash;
-    float blur, glassOpacity, glow, palette;
+    float energy, edgeOpacity, flash, glow;
+    float palette, reserved0, reserved1, reserved2;
 };
-static_assert(sizeof(Scene) == 64);
+static_assert(sizeof(Scene) == 48);
 
 struct Regions {
-    std::array<D3D11_RECT, 5> rect{};
+    std::array<D3D11_RECT, 4> rect{};
     int count{};
     void Add(LONG l,LONG t,LONG r,LONG b) noexcept { if (l<r && t<b) rect[count++] = {l,t,r,b}; }
 };
@@ -40,13 +35,6 @@ Regions Dirty(const Scene& scene) noexcept {
         regions.Add(0,h-y,w,h);
         regions.Add(0,y,x,h-y);
         regions.Add(w-x,y,w,h-y);
-    }
-    if (scene.orbOpacity >= .002f && scene.radius >= 1) {
-        float r = scene.radius*1.35f + 2;
-        // Screenshot particles can cross the center between the edge and the orb.
-        if (scene.flash > .042f) { regions = {}; regions.Add(0,0,w,h); }
-        else regions.Add((std::max)(0L,static_cast<LONG>(std::floor(scene.orbX-r))), (std::max)(0L,static_cast<LONG>(std::floor(scene.orbY-r))),
-                         (std::min)(w,static_cast<LONG>(std::ceil(scene.orbX+r))), (std::min)(h,static_cast<LONG>(std::ceil(scene.orbY+r))));
     }
     return regions;
 }
@@ -63,19 +51,16 @@ struct Overlay {
     ComPtr<ID3D11DeviceContext> context;
     ComPtr<ID3D11RenderTargetView> surface;
     ComPtr<ID3D11Texture2D> frameTexture;
-    struct Staging { ComPtr<ID3D11Texture2D> pixels; Regions regions; Scene scene{}; };
+    struct Staging { ComPtr<ID3D11Texture2D> pixels; Regions regions; };
     std::array<Staging, 2> staging;
     Regions previous;
     int head{}, pending{};
     unsigned long long transferred{};
-    ComPtr<ID3D11VertexShader> vertex, particleVertex;
-    ComPtr<ID3D11PixelShader> pixel, particlePixel;
-    ComPtr<ID3D11BlendState> blend;
+    ComPtr<ID3D11VertexShader> vertex;
+    ComPtr<ID3D11PixelShader> pixel;
     ComPtr<ID3D11RasterizerState> rasterizer;
     ComPtr<ID3D11Buffer> constants;
     bool visible{};
-    OrbBackdrop backdrop;
-    HRESULT backdropStatus = E_PENDING;
 
     HDC memoryDc{};
     HBITMAP dib{};
@@ -133,8 +118,6 @@ struct Overlay {
         }
         if (FAILED(hr = device->CreateVertexShader(SceneVS, sizeof(SceneVS), nullptr, &vertex))) return hr;
         if (FAILED(hr = device->CreatePixelShader(ScenePS, sizeof(ScenePS), nullptr, &pixel))) return hr;
-        if (FAILED(hr = device->CreateVertexShader(ParticleVSCode, sizeof(ParticleVSCode), nullptr, &particleVertex))) return hr;
-        if (FAILED(hr = device->CreatePixelShader(ParticlePSCode, sizeof(ParticlePSCode), nullptr, &particlePixel))) return hr;
         D3D11_BUFFER_DESC buffer{};
         buffer.ByteWidth = sizeof(Scene);
         buffer.Usage = D3D11_USAGE_DEFAULT;
@@ -147,19 +130,10 @@ struct Overlay {
         raster.ScissorEnable = TRUE;
         if (FAILED(hr = device->CreateRasterizerState(&raster, &rasterizer))) return hr;
 
-        D3D11_BLEND_DESC blendDesc{};
-        auto& channel = blendDesc.RenderTarget[0];
-        channel.BlendEnable = TRUE;
-        channel.SrcBlend = channel.SrcBlendAlpha = D3D11_BLEND_ONE;
-        channel.DestBlend = channel.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-        channel.BlendOp = channel.BlendOpAlpha = D3D11_BLEND_OP_ADD;
-        channel.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-        hr = device->CreateBlendState(&blendDesc, &blend);
-        if (SUCCEEDED(hr)) backdropStatus = backdrop.Init(hwnd, static_cast<float>(w), static_cast<float>(h));
-        return hr;
+        return S_OK;
     }
 
-    HRESULT Draw(const Scene& scene, int count) {
+    HRESULT Draw(const Scene& scene) {
         HRESULT presented = S_FALSE;
         if (pending) {
             auto& front = staging[head];
@@ -179,7 +153,6 @@ struct Overlay {
         auto& back = staging[(head+pending) % staging.size()];
         back.regions = Dirty(scene);
         if (back.regions.count == 0) return presented;
-        back.scene = scene;
         context->UpdateSubresource(constants.Get(), 0, nullptr, &scene, 0, 0);
         D3D11_VIEWPORT viewport{0,0,scene.width,scene.height,0,1};
         context->RSSetViewports(1, &viewport);
@@ -195,15 +168,6 @@ struct Overlay {
             context->RSSetScissorRects(1, &back.regions.rect[i]);
             context->Draw(3, 0);
         }
-        if (count > 0 && scene.orbOpacity > .002f) {
-            D3D11_RECT full{0,0,dimensions.cx,dimensions.cy};
-            context->RSSetScissorRects(1, &full);
-            context->OMSetBlendState(blend.Get(), nullptr, 0xffffffff);
-            context->VSSetShader(particleVertex.Get(), nullptr, 0);
-            context->PSSetShader(particlePixel.Get(), nullptr, 0);
-            context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            context->DrawInstanced(4, static_cast<UINT>(count), 0, 0);
-        }
         context->OMSetRenderTargets(0, nullptr, nullptr);
         for (int i=0; i<back.regions.count; ++i) {
             const auto& rect = back.regions.rect[i];
@@ -217,8 +181,6 @@ struct Overlay {
     }
 
     void Blit(const Staging& frame,const D3D11_MAPPED_SUBRESOURCE& source) noexcept {
-        const auto& scene=frame.scene;
-        if (scene.radius >= 1 || previous.count) backdrop.Set(scene.orbX,scene.orbY,scene.radius*.985f,scene.orbOpacity*scene.blur);
         const size_t stride = static_cast<size_t>(dimensions.cx) * 4;
         auto dest=static_cast<BYTE*>(dibPixels);
         auto pixels=static_cast<const BYTE*>(source.pData);
@@ -267,8 +229,8 @@ extern "C" __declspec(dllexport) void __stdcall ShowOverlay(void* handle, BOOL v
     else { ShowWindow(instance.hwnd, SW_HIDE); instance.pending = 0; instance.head = 0; }
 }
 
-extern "C" __declspec(dllexport) HRESULT __stdcall DrawOverlay(void* handle,const Scene* frame,int particles) noexcept {
-    auto result = static_cast<Overlay*>(handle)->Draw(*frame,particles);
+extern "C" __declspec(dllexport) HRESULT __stdcall DrawOverlay(void* handle,const Scene* frame) noexcept {
+    auto result = static_cast<Overlay*>(handle)->Draw(*frame);
     return result == DXGI_ERROR_WAS_STILL_DRAWING ? S_FALSE : result;
 }
 
@@ -276,7 +238,6 @@ extern "C" __declspec(dllexport) void __stdcall DestroyOverlay(void* handle) noe
 
 extern "C" __declspec(dllexport) HWND __stdcall OverlayHwnd(void* handle) noexcept { return static_cast<Overlay*>(handle)->hwnd; }
 
-extern "C" __declspec(dllexport) HRESULT __stdcall OverlayBackdropStatus(void* handle) noexcept { return static_cast<Overlay*>(handle)->backdropStatus; }
 extern "C" __declspec(dllexport) unsigned long long __stdcall OverlayTransferBytes(void* handle) noexcept { return static_cast<Overlay*>(handle)->transferred; }
 
 extern "C" __declspec(dllexport) unsigned __stdcall OverlayPixel(void* handle,int x,int y) noexcept {

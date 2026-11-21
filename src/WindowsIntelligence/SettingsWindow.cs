@@ -6,15 +6,16 @@ using System.Windows.Interop;
 using System.Windows.Input;
 using InputKey = System.Windows.Input.Key;
 using System.Windows.Media;
+using System.Windows.Shell;
 using Windows.ApplicationModel;
 
 namespace WindowsIntelligence;
 
 internal sealed class SettingsWindow : Window
 {
-    private static readonly Brush Canvas = Ui.Brush("#101824"), Rail = Ui.Brush("#131F31"), Surface = Ui.Brush("#19283C");
-    private static readonly Brush Selected = Ui.Brush("#233E51"), Line = Ui.Brush("#304359"), Ink = Ui.Brush("#ECF3FC");
-    private static readonly Brush Muted = Ui.Brush("#AAC0D5"), Accent = Ui.Brush("#7AE6CE");
+    private static readonly Brush Canvas = Theme("#F2F4F8", SystemColors.WindowBrush), Rail = Theme("#56FFFFFF", SystemColors.WindowBrush), Surface = Theme("#CCFFFFFF", SystemColors.WindowBrush);
+    private static readonly Brush Selected = Theme("#DCE9FF", SystemColors.HighlightBrush), Line = Theme("#1A263858", SystemColors.WindowTextBrush), Ink = Theme("#222838", SystemColors.WindowTextBrush);
+    private static readonly Brush Muted = Theme("#657084", SystemColors.WindowTextBrush), Accent = Theme("#0869E8", SystemColors.HighlightBrush);
     private static readonly FontFamily GlyphFont = new("Segoe Fluent Icons, Segoe MDL2 Assets");
     private readonly Settings model;
     private readonly Interaction interaction;
@@ -26,31 +27,43 @@ internal sealed class SettingsWindow : Window
     private readonly List<Action> save = [];
     private readonly ListBox list = new();
     private readonly ScrollViewer scroll;
-    private readonly TextBlock title = Ui.Text("", 28, Ink, true);
+    private readonly TextBlock title = Ui.Text("", 25, Ink, true);
     private readonly TextBlock group = Ui.Text("", 12, Muted, true);
+    private readonly TextBlock subtitle = Ui.Text("", 13, Muted);
     private CancellationTokenSource? microphoneTest;
     private AssistantShortcut? shortcutDraft;
     internal bool IsRecordingShortcut { get; private set; }
     private int tab;
-    private static readonly string[] Pages = ["总览", "语音球", "液态玻璃", "屏幕边缘", "粒子", "唤醒快捷键", "截图", "语音识别", "模型服务", "视觉输入", "语音朗读", "性能", "隐私与历史", "关于"];
-    private static readonly string[] Icons = ["\uE80F", "\uE91F", "\uE790", "\uE7F4", "\uE945", "\uE765", "\uE722", "\uE720",
-        "\uE968", "\uE91B", "\uE767", "\uE9D9", "\uE72E", "\uE946"];
+    private static readonly string[] Pages = ["总览", "屏幕边缘", "唤醒快捷键", "截图", "语音识别", "模型服务", "视觉输入", "语音朗读", "性能", "隐私与历史", "关于", "小爱同学", "QQ 消息与文件"];
+    private static readonly string[] Icons = ["\uE80F", "\uE7F4", "\uE765", "\uE722", "\uE720",
+        "\uE968", "\uE91B", "\uE767", "\uE9D9", "\uE72E", "\uE946", "\uE767", "\uE8F2"];
+    private static readonly string[] IconColors = ["#737EEB", "#B56ADB", "#8593A6", "#678BE8", "#EC6E8C", "#638CE8",
+        "#AB78D5", "#ED9B58", "#54AFA5", "#6C9BC1", "#8993A3", "#EB995B", "#648CF0"];
+    private static readonly string[] Descriptions = ["为你的声音、屏幕与日常操作，设置更顺手的体验。", "让每次唤醒，都有恰到好处的光。",
+        "选择最顺手的方式，随时唤醒助手。", "让助手看见你想询问的内容。", "调整输入设备，获得清晰准确的转写。",
+        "连接你信任的 AI 服务。", "设置助手如何理解屏幕与图片。", "选择自然的声音和朗读方式。", "在响应速度与资源占用之间，找到适合你的设置。",
+        "管理对话记录与数据的保留方式。", "关于你的 Windows Intelligence。", "让小爱同学连接这台电脑，保留原有语音体验。", "在你允许的范围内，查看 QQ 通知和接收文件的动态。"];
     private static readonly (string Name, int[] Pages)[] Sections =
     [
         ("", [0]),
-        ("交互", [7, 10, 5, 6]),
-        ("服务与隐私", [8, 9, 12]),
-        ("外观与性能", [1, 2, 3, 4, 11]),
-        ("", [13])
+        ("交互", [4, 7, 2, 3, 11, 12]),
+        ("服务与隐私", [5, 6, 9]),
+        ("外观与性能", [1, 8]),
+        ("", [10])
     ];
 
     public SettingsWindow(Settings model, Interaction interaction, Overlay overlay, int fastPath, AssistantHotkey? shortcut = null)
     {
         this.model = model; this.interaction = interaction; this.overlay = overlay; this.fastPath = fastPath;
         this.shortcut = shortcut;
-        Title = "Windows Intelligence"; Width = 1000; Height = 744; MinWidth = 790; MinHeight = 540;
+        Title = "Windows Intelligence · 设置"; Width = 1040; Height = 790; MinWidth = 820; MinHeight = 560;
         FontFamily = Ui.Body; FontSize = 14;
         Background = Canvas; Foreground = Ink; WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        UseLayoutRounding = true; SnapsToDevicePixels = true;
+        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
+        WindowStyle = WindowStyle.None;
+        WindowChrome.SetWindowChrome(this, new WindowChrome { CaptionHeight = 48, ResizeBorderThickness = new Thickness(6),
+            GlassFrameThickness = new Thickness(-1), CornerRadius = new CornerRadius(20), UseAeroCaptionButtons = false });
         Resources.MergedDictionaries.Add(new ResourceDictionary
         {
             Source = new Uri("/WindowsIntelligence;component/SettingsTheme.xaml", UriKind.Relative)
@@ -58,32 +71,39 @@ internal sealed class SettingsWindow : Window
         Resources["SettingsCanvas"] = Canvas; Resources["SettingsSurface"] = Surface; Resources["SettingsSelected"] = Selected;
         Resources["SettingsLine"] = Line; Resources["SettingsInk"] = Ink; Resources["SettingsMuted"] = Muted;
         Resources["SettingsAccent"] = Accent;
-        SourceInitialized += (_, _) =>
-        {
-            int useDarkMode = 1;
-            _ = DwmSetWindowAttribute(new WindowInteropHelper(this).Handle, 20, ref useDarkMode, sizeof(int));
-        };
+        if (SystemParameters.HighContrast) ApplyHighContrast();
+        SourceInitialized += (_, _) => ApplyBackdrop();
         IsVisibleChanged += (_, _) =>
         {
             if (IsVisible) return;
             microphoneTest?.Cancel();
             IsRecordingShortcut = false;
         };
-        var layout = new Grid { Background = Canvas };
-        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(228) });
+        var layout = new Grid();
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(238) });
         layout.ColumnDefinitions.Add(new ColumnDefinition());
         var side = new DockPanel { LastChildFill = true };
+        var windowControls = new StackPanel { Orientation = Orientation.Horizontal, Height = 48, Margin = new Thickness(22, 0, 0, 0) };
+        windowControls.Children.Add(WindowButton("关闭设置", "×", "#FF6059", Close));
+        windowControls.Children.Add(WindowButton("最小化设置", "−", "#FFBD2E", () => WindowState = WindowState.Minimized));
+        windowControls.Children.Add(WindowButton("切换最大化", "+", "#28C840", () => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized));
+        DockPanel.SetDock(windowControls, Dock.Top); side.Children.Add(windowControls);
         var brandLabel = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         brandLabel.Children.Add(Ui.Text("Windows Intelligence", 15, Ink, true));
-        brandLabel.Children.Add(Ui.Text("设置", 12, Muted));
-        var mark = NavGlyph("\uE720", 17);
+        brandLabel.Children.Add(Ui.Text("个人助理设置", 11, Muted));
+        var mark = NavGlyph("\uE713", 22);
         mark.HorizontalAlignment = HorizontalAlignment.Center;
         mark.VerticalAlignment = VerticalAlignment.Center;
-        mark.Foreground = Accent;
-        var brand = Ui.Row(new Border { Child = mark, Width = 35, Height = 35, Background = Selected,
-            CornerRadius = new CornerRadius(10), Margin = new Thickness(0, 0, 10, 0) }, brandLabel);
-        brand.Margin = new Thickness(16, 19, 8, 17);
+        mark.Foreground = Brushes.White;
+        var brand = Ui.Row(new Border { Child = mark, Width = 42, Height = 42, Background = GlassFill("#AEB9CB", "#77869E"),
+            BorderBrush = Ui.Brush("#D9FFFFFF"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(13), Margin = new Thickness(0, 0, 10, 0) }, brandLabel);
+        brand.Margin = new Thickness(18, 8, 8, 22);
         DockPanel.SetDock(brand, Dock.Top); side.Children.Add(brand);
+        var search = new TextBox { MinHeight = 34, Padding = new Thickness(10, 6, 8, 6), ToolTip = "搜索设置", Margin = new Thickness(14, 0, 14, 16) };
+        System.Windows.Automation.AutomationProperties.SetName(search, "搜索设置");
+        search.Style = (Style)FindResource("SettingsSearch");
+        WindowChrome.SetIsHitTestVisibleInChrome(search, true);
+        DockPanel.SetDock(search, Dock.Top); side.Children.Add(search);
         list.Background = Brushes.Transparent; list.BorderThickness = new Thickness(0); list.Padding = new Thickness(10, 0, 10, 12);
         ScrollViewer.SetHorizontalScrollBarVisibility(list, ScrollBarVisibility.Disabled);
         foreach (var section in Sections)
@@ -92,39 +112,56 @@ internal sealed class SettingsWindow : Window
             {
                 var label = Ui.Text(section.Name, 11, Muted, true);
                 var divider = new ListBoxItem { Content = label, Focusable = false, IsHitTestVisible = false,
-                    Padding = new Thickness(10, 9, 8, 2) };
+                    Padding = new Thickness(12, 14, 8, 4) };
                 divider.Style = (Style)FindResource("SettingsNavItem");
                 list.Items.Add(divider);
             }
             foreach (int index in section.Pages)
             {
                 var glyph = NavGlyph(Icons[index], 14);
-                glyph.Margin = new Thickness(0, 0, 10, 0);
+                glyph.Foreground = Brushes.White;
+                glyph.HorizontalAlignment = HorizontalAlignment.Center;
+                var tile = new Border { Child = glyph, Width = 25, Height = 25, CornerRadius = new CornerRadius(7),
+                    Background = Ui.Brush(IconColors[index]), Margin = new Thickness(0, 0, 10, 0) };
                 var label = new TextBlock { Text = Pages[index], VerticalAlignment = VerticalAlignment.Center };
-                var item = new ListBoxItem { Tag = index, Content = Ui.Row(glyph, label), Style = (Style)FindResource("SettingsNavItem") };
+                var item = new ListBoxItem { Tag = index, Content = Ui.Row(tile, label), Style = (Style)FindResource("SettingsNavItem") };
                 System.Windows.Automation.AutomationProperties.SetName(item, Pages[index]);
                 list.Items.Add(item);
             }
         }
+        search.TextChanged += (_, _) =>
+        {
+            string query = search.Text.Trim();
+            foreach (var item in list.Items.OfType<ListBoxItem>())
+                item.Visibility = item.Tag is int index
+                    ? (query.Length == 0 || Pages[index].Contains(query, StringComparison.CurrentCultureIgnoreCase) ? Visibility.Visible : Visibility.Collapsed)
+                    : (query.Length == 0 ? Visibility.Visible : Visibility.Collapsed);
+        };
         side.Children.Add(list);
-        layout.Children.Add(new Border { Child = side, Background = Rail, BorderThickness = new Thickness(0, 0, 1, 0), BorderBrush = Line });
-        var main = new DockPanel();
+        var sideGlass = new Border { Child = side, Background = GlassFill("#A6FFFFFF", "#64E4EAF8"), BorderThickness = new Thickness(0, 0, 1, 0), BorderBrush = Ui.Brush("#80FFFFFF") };
+        if (SystemParameters.HighContrast) sideGlass.Background = SystemColors.WindowBrush;
+        layout.Children.Add(sideGlass);
+        var main = new DockPanel { Background = SystemParameters.HighContrast ? SystemColors.WindowBrush : GlassFill("#DDF8FAFF", "#C8EDF0F8") };
         Grid.SetColumn(main, 1); layout.Children.Add(main);
         title.FontFamily = Ui.Display;
-        var header = new StackPanel { Margin = new Thickness(27, 19, 20, 13) };
+        var header = new StackPanel { Margin = new Thickness(30, 23, 30, 24) };
+        group.Margin = new Thickness(0, 0, 0, 6);
         header.Children.Add(group);
         header.Children.Add(title);
+        subtitle.Margin = new Thickness(0, 8, 0, 0); header.Children.Add(subtitle);
         DockPanel.SetDock(header, Dock.Top); main.Children.Add(header);
-        var footer = new DockPanel { Margin = new Thickness(27, 10, 20, 10) };
+        var footer = new DockPanel { Margin = new Thickness(18, 12, 10, 12) };
         var saveButton = ActionButton("保存设置", () => Save(), true);
         DockPanel.SetDock(saveButton, Dock.Right); footer.Children.Add(saveButton);
-        status.VerticalAlignment = VerticalAlignment.Center; footer.Children.Add(status);
-        var footerBorder = new Border { Child = footer, Background = Rail, BorderBrush = Line, BorderThickness = new Thickness(0, 1, 0, 0) };
+        status.VerticalAlignment = VerticalAlignment.Center; status.Margin = new Thickness(0, 0, 12, 0); status.TextWrapping = TextWrapping.Wrap; footer.Children.Add(status);
+        var footerBorder = new Border { Child = footer, Background = Surface, BorderBrush = Ui.Brush("#EFFFFFFF"), BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(20), Margin = new Thickness(26, 10, 26, 18) };
         DockPanel.SetDock(footerBorder, Dock.Bottom); main.Children.Add(footerBorder);
-        page.Margin = new Thickness(27, 1, 20, 10);
+        page.Margin = new Thickness(30, 1, 30, 8);
         scroll = new ScrollViewer { Content = page, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         main.Children.Add(scroll);
         Content = layout;
+        if (SystemParameters.HighContrast) Foreground = SystemColors.WindowTextBrush;
         OverlayUi.AsToolWindow(this);
         list.SelectionChanged += (_, _) =>
         {
@@ -208,6 +245,47 @@ internal sealed class SettingsWindow : Window
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(nint window, int attribute, ref int value, int size);
 
+    private static Brush Theme(string color, Brush accessible) => SystemParameters.HighContrast ? accessible : Ui.Brush(color);
+
+    private static LinearGradientBrush GlassFill(string top, string bottom)
+    {
+        var brush = new LinearGradientBrush((Color)ColorConverter.ConvertFromString(top), (Color)ColorConverter.ConvertFromString(bottom), 100);
+        brush.Freeze(); return brush;
+    }
+
+    private void ApplyHighContrast()
+    {
+        Resources["SettingsSelectedInk"] = SystemColors.HighlightTextBrush;
+        Resources["SettingsControl"] = SystemColors.WindowBrush;
+        Resources["SettingsRim"] = SystemColors.WindowTextBrush;
+    }
+
+    private void ApplyBackdrop()
+    {
+        nint handle = new WindowInteropHelper(this).Handle;
+        int light = 0, round = 2, mica = 2;
+        _ = DwmSetWindowAttribute(handle, 20, ref light, sizeof(int));
+        _ = DwmSetWindowAttribute(handle, 33, ref round, sizeof(int));
+        // DWM composites the backdrop; keep WPF hardware rendering and an opaque fallback.
+        if (!SystemParameters.HighContrast && DwmSetWindowAttribute(handle, 38, ref mica, sizeof(int)) >= 0 &&
+            HwndSource.FromHwnd(handle)?.CompositionTarget is { } target)
+        {
+            target.BackgroundColor = Colors.Transparent;
+            Background = Brushes.Transparent;
+        }
+    }
+
+    private Button WindowButton(string name, string symbol, string color, Action action)
+    {
+        var button = new Button { Content = symbol, Width = 13, Height = 13, FontSize = 12,
+            Background = Theme(color, SystemColors.ControlBrush), Foreground = Theme("#70222222", SystemColors.ControlTextBrush),
+            Margin = new Thickness(0, 0, 9, 0), ToolTip = name, Style = (Style)FindResource("SettingsTrafficLight") };
+        System.Windows.Automation.AutomationProperties.SetName(button, name);
+        WindowChrome.SetIsHitTestVisibleInChrome(button, true);
+        button.Click += (_, _) => action();
+        return button;
+    }
+
     private void Navigate(int index)
     {
         var item = list.Items.OfType<ListBoxItem>().Single(entry => entry.Tag is int pageIndex && pageIndex == index);
@@ -215,17 +293,20 @@ internal sealed class SettingsWindow : Window
         list.ScrollIntoView(item);
     }
 
-    public void ShowShortcutSettings() => Navigate(5);
+    public void ShowShortcutSettings() => Navigate(2);
 
     private static TextBlock NavGlyph(string code, int size) =>
         new() { Text = code, FontFamily = GlyphFont, FontSize = size, VerticalAlignment = VerticalAlignment.Center };
 
     private static Button ActionButton(string title, Action? action = null, bool primary = false)
     {
-        var button = Ui.Button(title, () => action?.Invoke(), primary);
+        var button = new Button { Content = title, Padding = new Thickness(16, 8, 16, 8), MinHeight = 35,
+            Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand, FontWeight = FontWeights.Medium };
+        button.SetResourceReference(StyleProperty, "SettingsButton");
         button.Background = primary ? Accent : Rail;
         button.BorderBrush = primary ? Accent : Line;
-        button.Foreground = primary ? Canvas : Ink;
+        button.Foreground = primary ? (SystemParameters.HighContrast ? SystemColors.HighlightTextBrush : Brushes.White) : Ink;
+        button.Click += (_, _) => action?.Invoke();
         System.Windows.Automation.AutomationProperties.SetName(button, title);
         return button;
     }
@@ -233,10 +314,11 @@ internal sealed class SettingsWindow : Window
     private void Render()
     {
         IsRecordingShortcut = false;
-        status.Text = ""; save.Clear(); page.Children.Clear();
+        status.Text = "更改后保存以应用。"; save.Clear(); page.Children.Clear();
         string section = Sections.Single(entry => entry.Pages.Contains(tab)).Name;
         group.Text = section.Length > 0 ? section : "Windows Intelligence";
         title.Text = Pages[tab];
+        subtitle.Text = Descriptions[tab];
         switch (tab)
         {
             case 0:
@@ -245,46 +327,33 @@ internal sealed class SettingsWindow : Window
                     Ui.Row(ActionButton("开始语音", () => { Hide(); interaction.Start(false); }, true),
                         ActionButton("输入问题", () => { Hide(); interaction.Start(false, typed: true); }),
                         ActionButton("截图提问", () => { Hide(); Dispatcher.InvokeAsync(() => interaction.Start(true)); })));
-                Card("当前服务", $"{model.Provider.Name}  ·  {model.Provider.TextModel}", ActionButton("配置模型服务", () => Navigate(8)));
+                Card("当前服务", $"{model.Provider.Name}  ·  {model.Provider.TextModel}", ActionButton("配置模型服务", () => Navigate(5)));
                 Label("操作电脑");
                 Check("允许助手自动操作电脑", model.PowerShellEnabled, v => model.PowerShellEnabled = v);
-                Add(Ui.Text("在语音或文字对话中提出操作请求后，助手会直接使用当前 Windows 账户执行。命令输出会发给当前 AI 服务。", 12, Ui.Muted));
+                Add(Ui.Text("在语音或文字对话中提出操作请求后，助手会直接使用当前 Windows 账户执行。命令输出会发给当前 AI 服务。", 12, Muted));
                 Card("启动与托盘", "登录 Windows 后保持 Copilot 键可用。",
                     Ui.Row(ActionButton("启用开机启动", () => Run(SetStartup(true))), ActionButton("关闭开机启动", () => Run(SetStartup(false)))));
                 Check("显示系统托盘图标（下次启动）", model.Tray, v => model.Tray = v);
                 Card("唤醒快捷键", $"当前使用 {wakeKey}。", ActionButton("更改快捷键", ShowShortcutSettings));
                 break;
             case 1:
-                Number("球体尺寸 (DIP)", model.OrbSize, 96, 240, v => model.OrbSize = (int)v);
-                Choose("球体位置", new[] { "顶部", "上方", "下方", "右下" }, model.OrbPosition, v => model.OrbPosition = v);
-                Number("音频灵敏度", model.Sensitivity, .2, 3, v => model.Sensitivity = v);
-                Number("动画速度", model.AnimationSpeed, .25, 2.5, v => model.AnimationSpeed = v);
-                break;
-            case 2:
-                Number("玻璃不透明度", model.Glass, .30, 1, v => model.Glass = v);
-                Number("球内背景模糊与高光柔化", model.Blur, 0, 1, v => model.Blur = v);
-                Add(Ui.Text($"Windows Host Backdrop · {overlay.BackdropStatus}", 12, Ui.Dim));
-                Number("渐变色偏移", model.Palette, 0, 1, v => model.Palette = v);
-                break;
-            case 3:
                 Check("唤醒时显示屏幕边缘光效", model.Edge, v => model.Edge = v);
                 Number("发光强度", model.Glow, 0, 1.6, v => model.Glow = v);
+                Number("音频灵敏度", model.Sensitivity, .2, 3, v => model.Sensitivity = v);
+                Number("动画速度", model.AnimationSpeed, .25, 2.5, v => model.AnimationSpeed = v);
+                Number("渐变色偏移", model.Palette, 0, 1, v => model.Palette = v);
                 break;
-            case 4:
-                Check("启用 GPU 实例化粒子", model.Particles, v => model.Particles = v);
-                Number("最大粒子数", model.ParticleCount, 0, 240, v => model.ParticleCount = (int)v);
-                break;
-            case 5: CopilotPage(); break;
-            case 6:
+            case 2: CopilotPage(); break;
+            case 3:
                 Choose("截图目标", new[] { "鼠标所在显示器", "主显示器", "所有显示器", "活动窗口", "手动选择区域" }, (int)model.Target, v => model.Target = (CaptureTarget)v);
                 Number("松开后等待语音 (ms)", model.VoiceWait, 300, 10000, v => model.VoiceWait = (int)v);
                 Check("松开键时立即结束录音", model.Strict, v => model.Strict = v);
                 Check("显示截图缩略图", model.Preview, v => model.Preview = v);
                 Multiline("默认截图提示词", model.ScreenshotPrompt, v => model.ScreenshotPrompt = v);
                 break;
-            case 7: RecognitionPage(); break;
-            case 8: AiPage(); break;
-            case 9:
+            case 4: RecognitionPage(); break;
+            case 5: AiPage(); break;
+            case 6:
                 Field("视觉模型", model.Provider.VisionModel, v => model.Provider.VisionModel = v);
                 Check("所选视觉模型支持图像", model.Provider.SupportsVision, v => model.Provider.SupportsVision = v);
                 Choose("图像格式", ["PNG", "JPEG"], model.ImageFormat == "JPEG" ? 1 : 0, v => model.ImageFormat = v == 1 ? "JPEG" : "PNG");
@@ -293,17 +362,59 @@ internal sealed class SettingsWindow : Window
                 Number("JPEG 质量", model.JpegQuality, 50, 100, v => model.JpegQuality = (int)v);
                 Number("图像长边上限 (px)", model.MaxImageSide, 768, 16000, v => model.MaxImageSide = (int)v);
                 break;
-            case 10: TtsPage(); break;
-            case 11:
-                Choose("渲染质量", ["低", "均衡", "高", "极高"], (int)model.Quality, v => model.Quality = (Quality)v);
-                Check("根据帧耗时降低粒子数量", model.Adaptive, v => model.Adaptive = v);
+            case 7: TtsPage(); break;
+            case 8:
+                Add(Ui.Text("语音键触发时后台加载准确识别模型；说完 30 秒后释放大模型，保留实时识别。使用中的识别和合成会先安全完成。",12,Muted));
                 Check("减少动画", model.ReduceMotion, v => model.ReduceMotion = v);
-                Add(Ui.Text(overlay.Failure ?? "Direct3D 11 · DirectComposition", 14, Ui.Muted));
+                Add(Ui.Text(overlay.Failure ?? "Direct3D 11 · DirectComposition", 14, Muted));
                 break;
-            case 12: PrivacyPage(); break;
-            case 13:
-                Card($"Windows Intelligence {typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3)}", "Windows 11 x64 · WPF · Direct3D 11 · Windows Graphics Capture · sherpa-onnx", Ui.Text(Copilot.GetAumid() ?? "本地调试进程", 13, Ui.Muted));
+            case 9: PrivacyPage(); break;
+            case 10:
+                Card($"Windows Intelligence {typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3)}", "Windows 11 x64 · WPF · Direct3D 11 · Windows Graphics Capture · sherpa-onnx", Ui.Text(Copilot.GetAumid() ?? "本地调试进程", 13, Muted));
                 break;
+            case 11: XiaoAIPage(); break;
+            case 12: QqPage(); break;
+        }
+    }
+
+    private void XiaoAIPage()
+    {
+        Card("小爱官方技能 · 无需刷机", "用“小爱同学，用电脑助手……”进入技能；电脑执行后，把结果交回小爱播报。",
+            Ui.Text("需要先在小爱开放平台配置技能和 HTTPS 服务。普通原生对话不会被本功能监听或接管。",13,Muted));
+        Check("连接已配对的小爱官方技能",model.XiaoAI.OfficialEnabled,v => model.XiaoAI.OfficialEnabled = v);
+        Field("技能服务 HTTPS 地址",model.XiaoAI.RelayUrl,v => model.XiaoAI.RelayUrl = v);
+        Key(XiaoAIRelayClient.CredentialId,"电脑配对密钥 · 仅存 Windows 凭据管理器");
+        Add(ActionButton("刷新连接状态",() => status.Text = interaction.OfficialXiaoAI.Status));
+        Add(Ui.Text(interaction.OfficialXiaoAI.Status,13,Accent));
+        Add(Ui.Text("电脑主动连接技能服务，不在电脑开放控制端口。执行遵循当前电脑自动操作设置，过程仍在电脑显示。耗时任务可用“电脑助手查看结果”查询；不承诺未经真机验证的后台主动播报。",12,Muted));
+    }
+
+    private void QqPage()
+    {
+        Card("QQ 检测", "文件变化和系统通知分别检测，内容只作为数据，不作为自动执行指令。",
+            Ui.Text("不读取加密聊天数据库，不注入 QQ 进程。系统通知不等于完整聊天记录。",13,Muted));
+        Check("检测 QQ 下载目录的文件变化",model.QQ.FilesEnabled,v => model.QQ.FilesEnabled = v);
+        var folder = Box("QQ 下载目录",model.QQ.DownloadDirectory);
+        save.Add(() => model.QQ.DownloadDirectory = folder.Text.Trim());
+        Add(ActionButton("选择 QQ 下载目录",() =>
+        {
+            var dialog = new Microsoft.Win32.OpenFolderDialog { Title="选择 QQ 下载目录" };
+            if (dialog.ShowDialog(this) == true) folder.Text = dialog.FolderName;
+        }));
+        Check("检测 QQ 的 Windows 系统通知",model.QQ.NotificationsEnabled,v => model.QQ.NotificationsEnabled = v);
+        Add(ActionButton("请求 Windows 通知访问",() => Run(Request())));
+        Check("允许已配对的小爱读取 QQ 检测结果",model.QQ.AllowSpeakerRead,v => model.QQ.AllowSpeakerRead = v);
+        Add(ActionButton("查看本机检测结果",() => Run(Preview())));
+        Add(Ui.Text("只记录启用期间捕获的变化，最多保留 100 条在内存。QQ 未发送到 Windows 通知中心的消息不会被捕获。文件检测不能判断发送人或保证下载完整。",12,Muted));
+        async Task Request() { status.Text = await interaction.QQ.RequestNotificationAccessAsync(); }
+        async Task Preview()
+        {
+            if (model.QQ.NotificationsEnabled) await interaction.QQ.ReadNotificationsAsync();
+            var events = interaction.QQ.Snapshot();
+            var content = new TextBox { Text=events.Count == 0 ? interaction.QQ.FileStatus + "\n" + interaction.QQ.NotificationStatus :
+                string.Join("\n\n",events.Select(e => $"{e.ReceivedAt:g} · {e.Kind}\n{e.Text}")),
+                IsReadOnly=true,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,VerticalScrollBarVisibility=ScrollBarVisibility.Auto };
+            new Window { Title="QQ · 本机检测结果",Content=content,Width=650,Height=450,Owner=this }.Show();
         }
     }
 
@@ -351,7 +462,7 @@ internal sealed class SettingsWindow : Window
         };
         Card("助手唤醒", "默认使用 Copilot 键。保存后，短按开启语音，双击进入静默输入，长按截图。", controls);
 
-        var details = Ui.Text("", 13, Ui.Muted);
+        var details = Ui.Text("", 13, Muted);
         Card("Windows Copilot 键", "使用默认按键时，在 Windows 的 Copilot 键设置中选择 Windows Intelligence。",
             Ui.Row(ActionButton("打开 Windows 按键选择器", Copilot.OpenSettings, true), ActionButton("诊断注册", () => Run(Update()))));
         Add(details);
@@ -404,11 +515,11 @@ internal sealed class SettingsWindow : Window
         Number("语速", model.TtsSpeed, .5, 2, v => model.TtsSpeed = v);
         Field("MiniMax 音色", model.MiniMaxVoice, v => model.MiniMaxVoice = v);
         Key(MiniMaxSpeech.CredentialId, "MiniMax API Key · Windows 凭据管理器");
-        Add(Ui.Text("MiniMax 默认使用 Speech-2.8-HD，失败后自动使用 Speech-2.8-Turbo。朗读文本会发送到 MiniMax。", 12, Ui.Muted));
+        Add(Ui.Text("MiniMax 默认使用 Speech-2.8-HD，失败后自动使用 Speech-2.8-Turbo。朗读文本会发送到 MiniMax。", 12, Muted));
         Field("ElevenLabs Voice ID", model.ElevenLabsVoice, v => model.ElevenLabsVoice = v);
         Field("ElevenLabs 模型", model.ElevenLabsModel, v => model.ElevenLabsModel = v);
         Key(ElevenLabsSpeech.CredentialId, "ElevenLabs API Key · Windows 凭据管理器");
-        Add(Ui.Text("选择 ElevenLabs 后，待朗读的文本会发送到 api.elevenlabs.io。", 12, Ui.Muted));
+        Add(Ui.Text("选择 ElevenLabs 后，待朗读的文本会发送到 api.elevenlabs.io。", 12, Muted));
         Number("Kokoro 声音编号（41–52 为中文声音）", model.LocalVoice, 0, 53, v => model.LocalVoice = (int)v);
         Providers(model.TtsProviders, p => p.Name, provider, p => model.ActiveTtsProvider = p.Id, () => { var p = new TtsProviderSettings { Name = "自定义朗读" }; model.TtsProviders.Add(p); model.ActiveTtsProvider = p.Id; });
         Field("服务名称", provider.Name, v => provider.Name = v);
@@ -448,7 +559,7 @@ internal sealed class SettingsWindow : Window
     {
         var history = new Window { Owner = this, Title = "Windows Intelligence · 历史", Width = 680, Height = 560,
             Content = new TextBox { Text = interaction.HistoryText, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
-                Background = Ui.Night, Foreground = Ui.Ink, Padding = new Thickness(18), FontSize = 15, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } };
+                Background = Canvas, Foreground = Ink, Padding = new Thickness(18), FontSize = 15, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } };
         history.Show();
     }
 
@@ -469,11 +580,13 @@ internal sealed class SettingsWindow : Window
     private void Card(string title, string detail, UIElement tail)
     {
         var box = new StackPanel();
-        box.Children.Add(Ui.Text(title, 18, Ink, true));
+        box.Children.Add(Ui.Text(title, 16, Ink, true));
         var label = Ui.Text(detail, 13, Muted); label.Margin = new Thickness(0, 5, 0, 13);
         box.Children.Add(label); box.Children.Add(tail);
-        page.Children.Add(new Border { Child = box, Padding = new Thickness(17), Background = Surface, BorderBrush = Line,
-            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Margin = new Thickness(0, 0, 0, 12) });
+        if (tail is Button button) button.HorizontalAlignment = HorizontalAlignment.Left;
+        page.Children.Add(new Border { Child = box, Padding = new Thickness(21), Background = SystemParameters.HighContrast ? Surface : GlassFill("#EEFFFFFF", "#BFFFFFFF"),
+            BorderBrush = SystemParameters.HighContrast ? Line : GlassFill("#FFFFFFFF", "#2794A1BD"),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(18), Margin = new Thickness(0, 0, 0, 15) });
     }
 
     private void Add(FrameworkElement item)
@@ -494,8 +607,8 @@ internal sealed class SettingsWindow : Window
         label.Margin = new Thickness(0, 3, 12, 3);
         label.VerticalAlignment = VerticalAlignment.Center;
         row.Children.Add(label);
-        page.Children.Add(new Border { Child = row, Padding = new Thickness(12, 7, 10, 7), Background = Surface,
-            BorderBrush = Line, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(9), Margin = new Thickness(0, 0, 0, 9) });
+        page.Children.Add(new Border { Child = row, Padding = new Thickness(16, 10, 12, 10), Background = Surface,
+            BorderBrush = Line, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(13), Margin = new Thickness(0, 0, 0, 9) });
     }
 
     private TextBox Box(string title, string value)
@@ -535,8 +648,24 @@ internal sealed class SettingsWindow : Window
     private void Check(string title, bool value, Action<bool> set)
     {
         var check = new CheckBox { Content = Ui.Text(title, 14, Ink), IsChecked = value };
+        check.Loaded += (_, _) => PositionThumb(false);
+        check.Checked += (_, _) => PositionThumb(true);
+        check.Unchecked += (_, _) => PositionThumb(true);
         System.Windows.Automation.AutomationProperties.SetName(check, title);
         Add(check); save.Add(() => set(check.IsChecked == true));
+        void PositionThumb(bool animate)
+        {
+            if (check.Template?.FindName("Thumb", check) is not System.Windows.Shapes.Ellipse thumb) return;
+            if (thumb.RenderTransform is not TranslateTransform transform || transform.IsFrozen)
+                thumb.RenderTransform = transform = new TranslateTransform();
+            double from = transform.X, to = check.IsChecked == true ? 17 : 0;
+            transform.BeginAnimation(TranslateTransform.XProperty, null);
+            transform.X = to;
+            if (animate && GlassMotion.Enabled(model.ReduceMotion))
+                transform.BeginAnimation(TranslateTransform.XProperty, new System.Windows.Media.Animation.DoubleAnimation(from, to, TimeSpan.FromMilliseconds(160))
+                { EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut },
+                    FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop });
+        }
     }
 
     private void Choose(string title, string[] options, int index, Action<int> set)
@@ -561,7 +690,7 @@ internal sealed class SettingsWindow : Window
     {
         try
         {
-            if (tab == 5 && shortcut is not null)
+            if (tab == 2 && shortcut is not null)
             {
                 AssistantShortcut? previous = model.Shortcut;
                 shortcut.Apply(shortcutDraft, () =>
@@ -575,7 +704,15 @@ internal sealed class SettingsWindow : Window
             else
             {
                 foreach (var update in save) update();
+                if (model.XiaoAI.OfficialEnabled)
+                {
+                    _ = XiaoAIRelayClient.BaseAddress(model.XiaoAI.RelayUrl);
+                    if (SecretStore.Get(XiaoAIRelayClient.CredentialId).Length < 32) throw new UserError("请保存至少 32 字符的电脑配对密钥。");
+                }
+                if (model.QQ.FilesEnabled && (!Directory.Exists(model.QQ.DownloadDirectory) ||
+                    (File.GetAttributes(model.QQ.DownloadDirectory) & FileAttributes.ReparsePoint) != 0)) throw new UserError("QQ 下载目录不存在或是目录链接。");
                 model.Save();
+                interaction.ApplyIntegrations();
             }
             status.Text = "设置已保存。";
             return true;

@@ -10,10 +10,15 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        if (args.Length == 1 && args[0] is "--import-elevenlabs-credential" or "--import-minimax-credential")
+        if (args.Length == 1 && args[0] is "--import-elevenlabs-credential" or "--import-minimax-credential" or "--import-xiaoai-relay-credential")
         {
             var key = Console.In.ReadLine();
             if (string.IsNullOrWhiteSpace(key) || key.Length > 500) { Environment.ExitCode = 2; return; }
+            if (args[0] == "--import-xiaoai-relay-credential")
+            {
+                if (key.Trim().Length < 32) { Environment.ExitCode = 2; return; }
+                SecretStore.Set(XiaoAIRelayClient.CredentialId,key.Trim()); return;
+            }
             bool minimax = args[0] == "--import-minimax-credential";
             SecretStore.Set(minimax ? MiniMaxSpeech.CredentialId : ElevenLabsSpeech.CredentialId, key.Trim());
             if (minimax)

@@ -57,6 +57,9 @@ internal sealed class Caption : IDisposable
     private readonly Window window = OverlayUi.Window("Windows Intelligence · 助手");
     private readonly TextBlock phase = Ui.Text("", 12, Quiet, true), subtitle = Ui.Text("", 13, Ink);
     private readonly MarkdownReplyView response = new() { MaxHeight = 265, Light = true };
+    private readonly ExecutionTraceView execution = new();
+    private readonly ScrollViewer contentScroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
     private readonly TextBox prompt = new() { MinHeight = 26, VerticalContentAlignment = VerticalAlignment.Center };
     private readonly TextBlock placeholder = Ui.Text("输入问题", 14, Quiet);
     private readonly TextBlock privacy = Ui.Text("", 12, Quiet);
@@ -174,9 +177,10 @@ internal sealed class Caption : IDisposable
         var content = new StackPanel();
         shell = new Border
         {
-            Child = content, CornerRadius = new CornerRadius(22), BorderThickness = new Thickness(1), Padding = new Thickness(17),
+            Child = contentScroll, CornerRadius = new CornerRadius(22), BorderThickness = new Thickness(1), Padding = new Thickness(17),
             BorderBrush = glassRim, Background = Glass("#FAFFFFFF", "#F2EDF0FA"), Margin = new Thickness(0, 8, 0, 0)
         };
+        contentScroll.Content = content;
         root.Children.Add(shell);
         window.Content = root;
         phase.Margin = new Thickness(0, 0, 0, 8);
@@ -193,7 +197,7 @@ internal sealed class Caption : IDisposable
         thumbnailButton.Margin = new Thickness(0, 0, 0, 8);
         thumbnailButton.Padding = new Thickness(0);
         var footer = Ui.Row(PanelButton("关闭", () => Cancel?.Invoke()), retry, read, send);
-        foreach (var item in new UIElement[] { phase, thumbnailButton, subtitle, response, privacy, footer })
+        foreach (var item in new UIElement[] { phase, thumbnailButton, subtitle, execution, response, privacy, footer })
             content.Children.Add(item);
         window.PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) { Cancel?.Invoke(); e.Handled = true; } };
         window.SourceInitialized += (_, _) =>
@@ -205,7 +209,8 @@ internal sealed class Caption : IDisposable
         State("", "", "", false, false, "");
     }
 
-    public void State(string status, string input, string answer, bool canSend, bool canRetry, string warning, bool voicePending = false)
+    public void State(string status, string input, string answer, bool canSend, bool canRetry, string warning, bool voicePending = false,
+        IReadOnlyList<ExecutionStep>? steps = null)
     {
         bool listening = status == "正在聆听";
         phase.Text = status;
@@ -220,6 +225,7 @@ internal sealed class Caption : IDisposable
         subtitle.Text = input;
         subtitle.Visibility = string.IsNullOrWhiteSpace(input) ? Visibility.Collapsed : Visibility.Visible;
         markdown = answer;
+        execution.Update(steps);
 
         response.SetMarkdown(answer, completed);
         readerContent?.SetMarkdown(answer, completed);
@@ -230,7 +236,7 @@ internal sealed class Caption : IDisposable
         send.Visibility = canSend && !voicePending && (image is not null || input.Length > 0) ? Visibility.Visible : Visibility.Collapsed;
         retry.Visibility = canRetry ? Visibility.Visible : Visibility.Collapsed;
         var visibility = phase.Visibility == Visibility.Visible || subtitle.Visibility == Visibility.Visible ||
-            answer.Length > 0 || warning.Length > 0 || thumbnailButton.Visibility == Visibility.Visible || canRetry ? Visibility.Visible : Visibility.Collapsed;
+            answer.Length > 0 || execution.Visibility == Visibility.Visible || warning.Length > 0 || thumbnailButton.Visibility == Visibility.Visible || canRetry ? Visibility.Visible : Visibility.Collapsed;
         if (visibility == Visibility.Visible && shell.Visibility != visibility && window.IsVisible)
             GlassMotion.Reveal(shell, ReduceMotion, -10, 245);
         shell.Visibility = visibility;
@@ -410,6 +416,8 @@ internal sealed class Caption : IDisposable
     {
         if (!window.IsVisible) return;
         var bounds = screen.WorkingArea;
+        contentScroll.MaxHeight = Math.Max(100, bounds.Height / scale - 130);
+        root.Width = Math.Min(406, Math.Max(240, bounds.Width / scale - 38));
         int top = bounds.Top + (int)Math.Round(23 * scale);
         int left = bounds.Right - (int)Math.Round(439 * scale);
         if (left != lastX || top != lastY)

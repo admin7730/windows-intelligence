@@ -32,13 +32,13 @@ flowchart LR
 
 1. **转写。** NAudio 采集麦克风音频，本地模型以 16 kHz 音频工作。Silero VAD 辅助判断语音段，Zipformer 输出实时预览。最终提交优先采用 Qwen3-ASR 的整句转写，快速模式或回退路径可用 SenseVoice。
 2. **截图。** 原生模块使用 Windows Graphics Capture 采集显示器或活动窗口。应用通过 `ScreenshotState` 管理捕获、预览、裁剪、遮挡和提交，捕获时暂时隐藏自己的窗口。截图授权绑定到当前模型服务及目标地址。
-3. **请求。** `MultimodalRequestBuilder` 按内容选择文本或视觉模型。`AiClient` 调用兼容 Chat Completions 的端点，必要时携带所选上下文和截图。如果服务支持流式回复，客户端可逐步显示结果。
+3. **请求。** `MultimodalRequestBuilder` 按内容选择文本或视觉模型。`AiClient` 调用兼容 Chat Completions 的端点，必要时携带所选上下文和截图。服务流式生成仍由客户端接收；静默模式逐步显示。开启朗读时，最终结果等第一段可播放音频生成后显示，后续音频继续排队生成。
 4. **本机操作。** 文本会话满足模型与设置条件时，客户端可提供 `run_powershell` 工具。`PowerShellRunner` 在当前用户身份下执行命令，支持超时、取消和输出长度限制。输出回传给模型以生成结果或继续下一步。
 5. **朗读。** `SpeechOutput` 支持离线 Kokoro、MiniMax、ElevenLabs 与自定义朗读 API。MiniMax 使用 HD 到 Turbo 的回退顺序。静默会话使用文字回复。
 
 ## 原生渲染与性能
 
-`Overlay` 为各显示器维护各自的渲染面。C++ 和 HLSL 负责屏幕边缘效果，Direct3D 11 渲染图像，原生模块按区域读取像素并通过分层 Win32 窗口呈现。背景材质使用 Windows.UI.Composition 的宿主背景画刷。无动画时停止调度渲染帧。应用可按负载调整粒子数量，也遵循系统减少动画偏好。
+`Overlay` 为各显示器维护各自的渲染面。C++ 和 HLSL 负责屏幕边缘效果，Direct3D 11 渲染图像，原生模块按区域读取像素并通过分层 Win32 窗口呈现。旧语音球、背景模糊与粒子渲染已移除，空闲边缘层停止调度与回读。设置窗口另用 DWM Mica 及 WPF 轻量分层绘制 macOS 风格玻璃，不开启整窗 AllowsTransparency 或持续截图模糊。开关和页面过渡遵循减少动画设置。
 
 ## 配置与部署
 
@@ -55,3 +55,13 @@ flowchart LR
 | [packaging](../packaging) | MSIX 清单、安装脚本、安装程序配置 |
 | [scripts](../scripts) | 模型下载、编译、测试、签名和导出 |
 | [tests](../tests) | 快捷键、截图、渲染、语音、模型请求及本机操作测试 |
+
+## 执行记录、语音生命周期与官方技能
+
+`ExecutionJournal`/`ExecutionTraceView` 显示工具说明、命令、实时输出、错误、用时与退出码；显示层脱敏并限制输出长度。`IdleModelCache` 按语音会话管理重模型的 30 秒空闲释放。即时转写继续预加载，准确模型在语音键触发后后台加载，不保证不同硬件上的固定内存峰值或加载耗时。
+
+`XiaoAI.Protocol` 包含小米签名、请求与回复协议；`XiaoAI.SkillRelay` 只做鉴权和任务交接，不包含另一个 AI。电脑使用 `XiaoAIRelayClient` 主动 HTTPS 领取任务，经现有 `Interaction` 与 `PowerShellRunner` 执行并返回 `to_speak` 回复。技能身份、用户、设备及配对令牌必须匹配；任务只领取一次，断网或服务重启不自动重做。
+
+`QqDetection` 在用户选择的目录检测稳定可读文件元数据，并在明确授权后读取 Windows QQ 通知。不会解密聊天数据库或执行通知内容；通知不代表完整聊天记录。默认不允许音箱读取检测结果。
+
+官方技能与 QQ 帐号尚未完成真机验收；普通原生小爱对话不会被监听或接管，耗时任务当前需要在技能中查询结果。详见[接入说明](../integrations/xiaoai/README.md)。

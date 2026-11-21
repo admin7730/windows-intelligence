@@ -25,7 +25,8 @@ internal static class PowerShellRunner
     internal const int MaxCommandLength = 4000;
     private const int MaxOutputLength = 6000;
 
-    public static async Task<PowerShellResult> RunAsync(string command, CancellationToken cancellation, TimeSpan? limit = null)
+    public static async Task<PowerShellResult> RunAsync(string command, CancellationToken cancellation, TimeSpan? limit = null,
+        Action<bool, string>? output = null)
     {
         if (string.IsNullOrWhiteSpace(command) || command.Length > MaxCommandLength || command.Contains('\0'))
             throw new UserError("PowerShell 命令为空、包含无效字符或超过长度限制。");
@@ -69,8 +70,8 @@ internal static class PowerShellRunner
         try
         {
             await Task.WhenAll(process.WaitForExitAsync(timeout.Token),
-                DrainAsync(process.StandardOutput, stdout, timeout.Token),
-                DrainAsync(process.StandardError, stderr, timeout.Token)).ConfigureAwait(false);
+                DrainAsync(process.StandardOutput, stdout, timeout.Token, text => output?.Invoke(false, text)),
+                DrainAsync(process.StandardError, stderr, timeout.Token, text => output?.Invoke(true, text))).ConfigureAwait(false);
             return new(process.ExitCode, stdout.ToString(), stderr.ToString());
         }
         catch (OperationCanceledException)
@@ -83,7 +84,7 @@ internal static class PowerShellRunner
         }
     }
 
-    private static async Task DrainAsync(StreamReader source, StringBuilder output, CancellationToken cancellation)
+    private static async Task DrainAsync(StreamReader source, StringBuilder output, CancellationToken cancellation, Action<string> publish)
     {
         var buffer = new char[2048];
         bool truncated = false;
@@ -92,8 +93,13 @@ internal static class PowerShellRunner
         {
             int retain = Math.Min(count, MaxOutputLength - output.Length);
             output.Append(buffer, 0, retain);
+            if (retain > 0) publish(new string(buffer, 0, retain));
             truncated |= retain < count;
         }
-        if (truncated) output.AppendLine().Append("[输出已截断]");
+        if (truncated)
+        {
+            output.AppendLine().Append("[输出已截断]");
+            publish("\n[输出已截断]");
+        }
     }
 }

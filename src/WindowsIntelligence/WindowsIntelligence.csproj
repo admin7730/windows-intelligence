@@ -10,13 +10,15 @@
     <PlatformTarget>x64</PlatformTarget>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <StartupObject>WindowsIntelligence.Program</StartupObject>
-    <Version>0.2.40</Version>
+    <Version>0.2.45</Version>
   </PropertyGroup>
   <ItemGroup><InternalsVisibleTo Include="WindowsIntelligence.Tests" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../XiaoAI.Protocol/XiaoAI.Protocol.csproj" /></ItemGroup>
   <ItemGroup><Content Include="Sounds\*.wav" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="SpeechCpu.config" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
   <ItemGroup>
     <PackageReference Include="Markdig" Version="1.6.0" />
     <PackageReference Include="NAudio" Version="2.2.1" />
-    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="2.0.1" />
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.12.39" />
   </ItemGroup>
 </Project>

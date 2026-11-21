@@ -37,7 +37,7 @@ try {
     Copy-Item -LiteralPath .tooling/models/qwen3-asr-license.txt -Destination artifacts/models/ASR/Qwen3/LICENSE -Force
     Copy-Item -LiteralPath .tooling/models/silero-vad-license.txt -Destination artifacts/models/ASR/silero-vad-LICENSE -Force
     Copy-Item -LiteralPath .tooling/models/silero_vad.onnx -Destination artifacts/models/ASR/silero_vad.onnx -Force
-    & tar.exe -xf $ttsArchive -C artifacts/models/TTS --strip-components 1 --exclude '*/espeak-ng-data' --exclude '*/espeak-ng-data/*'
+    & tar.exe -xf $ttsArchive -C artifacts/models/TTS --strip-components 1
     if ($LASTEXITCODE) { throw 'Could not extract Kokoro model.' }
     Copy-Item -LiteralPath artifacts/models/TTS/LICENSE -Destination artifacts/models/ASR/LICENSE
     if ($Fixtures) {
