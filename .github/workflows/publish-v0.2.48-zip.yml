@@ -1,0 +1,93 @@
+name: Upload full Windows Intelligence v0.2.48 ZIP
+on:
+  push:
+    branches:
+      - codex/publish-v0.2.48-full-zip
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    if: github.repository == 'admin7730/windows-intelligence'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      RELEASE_REPOSITORY: admin7730/windows-intelligence
+      RELEASE_TAG: v0.2.48
+      RELEASE_SHA256: 73b2bfea88b0e0486f8e2c3b69edc2ff9bcb9d31b35f137ae9655f4bceade2f5
+    steps:
+      - name: Fetch and verify existing release segments
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import concurrent.futures
+          import hashlib
+          import json
+          import os
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          repo = os.environ["RELEASE_REPOSITORY"]
+          tag = os.environ["RELEASE_TAG"]
+          base = f"https://github.com/{repo}/releases/download/{tag}/"
+          release = json.loads(subprocess.check_output([
+              "curl", "--fail", "--silent", "--show-error", "--retry", "4",
+              f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+          ]))
+          if release["id"] != 454423808 or release["draft"] or release["tag_name"] != tag:
+              raise SystemExit("Unexpected release")
+          assets = {entry["name"]: entry for entry in release["assets"]}
+          names = [f"WI-0.2.48-x64.part{i:02}" for i in range(1, 21)]
+          cache = Path("checked-parts")
+          cache.mkdir(exist_ok=True)
+
+          def fetch(name):
+              metadata = assets[name]
+              url = base + name
+              if metadata["browser_download_url"] != url or metadata["state"] != "uploaded":
+                  raise ValueError("Unexpected source asset " + name)
+              path = cache / name
+              subprocess.run([
+                  "curl", "--fail", "--silent", "--show-error", "--location",
+                  "--proto", "=https", "--proto-redir", "=https", "--retry", "5",
+                  "--retry-all-errors", "--connect-timeout", "30", "--max-time", "180",
+                  "--output", str(path), url
+              ], check=True)
+              with path.open("rb") as stream:
+                  digest = hashlib.file_digest(stream, "sha256").hexdigest()
+              if metadata["digest"] != "sha256:" + digest or metadata["size"] != path.stat().st_size:
+                  raise ValueError("Segment check failed for " + name)
+              print(f"Verified {name}", flush=True)
+              return path
+
+          with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+              files = list(pool.map(fetch, names))
+          output = Path("WindowsIntelligence-0.2.48-x64.zip")
+          with output.open("wb") as stream:
+              for path in files:
+                  with path.open("rb") as part:
+                      shutil.copyfileobj(part, stream)
+          with output.open("rb") as stream:
+              digest = hashlib.file_digest(stream, "sha256").hexdigest()
+          if output.stat().st_size != 1620230630 or digest != os.environ["RELEASE_SHA256"]:
+              raise SystemExit("Full ZIP hash or size does not match the signed installer bundle")
+          print("Verified whole ZIP", digest)
+          PY
+      - name: Upload the complete installation ZIP
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          name=WindowsIntelligence-0.2.48-x64.zip
+          gh release upload "$RELEASE_TAG" "$name" --repo "$RELEASE_REPOSITORY"
+          gh api "repos/$RELEASE_REPOSITORY/releases/tags/$RELEASE_TAG" |
+            jq -e --arg name "$name" --arg sha "$RELEASE_SHA256" '
+              any(.assets[];
+                .name == $name and
+                .state == "uploaded" and
+                .size == 1620230630 and
+                .digest == ("sha256:" + $sha))'
