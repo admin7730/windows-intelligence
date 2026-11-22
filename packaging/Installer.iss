@@ -1,7 +1,7 @@
 [Setup]
 AppId={{38BD063A-D465-48FF-96ED-C15196DC72B5}
 AppName=Windows Intelligence
-AppVersion=0.2.45
+AppVersion=0.2.48
 DefaultDirName={localappdata}\Windows Intelligence
 CreateAppDir=no
 Uninstallable=no

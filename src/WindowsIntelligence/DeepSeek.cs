@@ -10,7 +10,7 @@ internal sealed record AiTurn(string Text, string Answer, ImageInput? Image = nu
 internal sealed record ImageInput(byte[] Bytes, string Mime);
 internal sealed record AiActivity(string Status, string? Command = null, string? Description = null, string? Preview = null);
 internal sealed record AiRequest(Guid RequestId, ProviderSettings Provider, string Model, string Text, ImageInput? Image,
-    IReadOnlyList<AiTurn> Context, DateTimeOffset CreatedAt, string Detail);
+    IReadOnlyList<AiTurn> Context, DateTimeOffset CreatedAt, string Detail, string Memory = "", AppLanguage Language = AppLanguage.SimplifiedChinese);
 
 internal static class MultimodalRequestBuilder
 {
@@ -28,7 +28,7 @@ internal static class MultimodalRequestBuilder
         if (!provider.SupportsText) throw new UserError("当前服务未启用文本输入。");
         if (vision && (!provider.SupportsVision || (AiEndpoint.Create(provider.BaseUrl).Host == "api.deepseek.com" && model == "deepseek-v4-pro")))
             throw new UserError("当前模型未启用图像输入。请切换到支持视觉的模型，例如 deepseek-flash。");
-        return new(requestId, provider, model, text.Trim(), image, context, DateTimeOffset.UtcNow, settings.ImageDetail);
+        return new(requestId, provider, model, text.Trim(), image, context, DateTimeOffset.UtcNow, settings.ImageDetail, settings.Memory.Personal[..Math.Min(8000, settings.Memory.Personal.Length)], settings.Language);
     }
 }
 
@@ -101,6 +101,8 @@ internal sealed class AiClient(HttpClient? transport = null)
             ai.Context.All(turn => turn.Image is null);
         var messages = new List<object>();
         string system = Persona + "\n" + ai.Provider.SystemPrompt +
+            "\n" + L10n.ReplyPreference(ai.Language) +
+            (string.IsNullOrWhiteSpace(ai.Memory) ? "" : "\n用户在本机设置的个人记忆与偏好（当前请求优先）：\n" + ai.Memory) +
             "\n" + AnswerOpening +
             "\n回答可使用 Markdown：需要结构时用标题、列表、表格或带语言标签的代码块；普通短答保持简洁。";
         messages.Add(new { role = "system", content = system + "\n" + (tools ? PowerShellPrompt :

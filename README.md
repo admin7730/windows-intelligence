@@ -4,6 +4,14 @@ Windows 11 桌面 AI 助手，通过 Copilot 键或自定义快捷键打开。�
 
 [下载安装包](https://github.com/admin7730/windows-intelligence/releases/latest) · [获取 API 密钥](#获取-api-密钥) · [技术架构](#技术架构) · [未来展望](#未来展望)
 
+## 0.2.48 更新
+
+- 按 Copilot 键后直接说“你去给 DeepSeek 说一声，让它检查项目里的测试”或“让 Codex 整理文档”。助手会弹出项目与对话选择器。
+- 可搜索已有会话、在选中项目中开启新对话，或输入名称新建项目。确认后将任务发送到选中的原生会话。支持的范围是 DeepSeek Harness 和 Codex 的本机会话，Codex 按工作目录归类。
+- 延续上一版的作业列表、取消和执行输出。另包含 0.2.46 新增的对话历史、可编辑的指令记忆和简繁英界面。
+
+[0.2.48 使用与验证说明](docs/UPDATE_0.2.48.md) · [0.2.47 任务派发](docs/UPDATE_0.2.47.md) · [0.2.46 对话与语言](docs/UPDATE_0.2.46.md)
+
 ## 0.2.45 更新
 
 ![0.2.45 设置界面](docs/images/settings-glass.png)

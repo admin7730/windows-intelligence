@@ -10,21 +10,21 @@ internal static class Ui
 {
     public static readonly Brush Ink = Brush("#ECF0FE"), Muted = Brush("#A4AEC8"), Dim = Brush("#7685A6"), Line = Brush("#29344F"), Accent = Brush("#91B9FF");
     public static readonly Brush Night = Brush("#0D1220"), Panel = Brush("#151E31"), Field = Brush("#10182A");
-    public static readonly FontFamily Body = new("SF Pro Text, Segoe UI Variable Text, Microsoft YaHei UI");
-    public static readonly FontFamily Display = new("SF Pro Display, SF Pro Text, Segoe UI Variable Text, Microsoft YaHei UI");
+    public static readonly FontFamily Body = new("SF Pro Text, Segoe UI Variable Text, Microsoft YaHei UI, Microsoft JhengHei UI");
+    public static readonly FontFamily Display = new("SF Pro Display, SF Pro Text, Segoe UI Variable Text, Microsoft YaHei UI, Microsoft JhengHei UI");
     public static readonly FontFamily Mono = new("SF Mono, Cascadia Mono, Consolas");
 
     public static Brush Brush(string color) => new SolidColorBrush((Color)ColorConverter.ConvertFromString(color));
 
     public static TextBlock Text(string value, double font = 14, Brush? color = null, bool bold = false) => new()
     {
-        Text = value, FontSize = font, Foreground = color ?? Ink, TextWrapping = TextWrapping.Wrap,
+        Text = L10n.T(value), FontSize = font, Foreground = color ?? Ink, TextWrapping = TextWrapping.Wrap,
         FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal
     };
 
     public static Button Button(string title, Action action, bool primary = false)
     {
-        var button = new Button { Content = title, Foreground = primary ? Night : Ink, Background = primary ? Accent : Panel,
+        var button = new Button { Content = L10n.T(title), Foreground = primary ? Night : Ink, Background = primary ? Accent : Panel,
             Cursor = System.Windows.Input.Cursors.Hand, Padding = new Thickness(12, 7, 12, 7), Margin = new Thickness(0, 0, 8, 0), MinHeight = 32,
             BorderBrush = primary ? Accent : Line, BorderThickness = new Thickness(1), FontWeight = FontWeights.SemiBold };
         var container = new FrameworkElementFactory(typeof(Border));

@@ -34,20 +34,20 @@ internal sealed class SettingsWindow : Window
     private AssistantShortcut? shortcutDraft;
     internal bool IsRecordingShortcut { get; private set; }
     private int tab;
-    private static readonly string[] Pages = ["总览", "屏幕边缘", "唤醒快捷键", "截图", "语音识别", "模型服务", "视觉输入", "语音朗读", "性能", "隐私与历史", "关于", "小爱同学", "QQ 消息与文件"];
+    private static readonly string[] Pages = ["总览", "屏幕边缘", "唤醒快捷键", "截图", "语音识别", "模型服务", "视觉输入", "语音朗读", "性能", "隐私与历史", "关于", "小爱同学", "QQ 消息与文件", "对话与记忆", "任务派发"];
     private static readonly string[] Icons = ["\uE80F", "\uE7F4", "\uE765", "\uE722", "\uE720",
-        "\uE968", "\uE91B", "\uE767", "\uE9D9", "\uE72E", "\uE946", "\uE767", "\uE8F2"];
+        "\uE968", "\uE91B", "\uE767", "\uE9D9", "\uE72E", "\uE946", "\uE767", "\uE8F2", "\uE8F2", "\uE724"];
     private static readonly string[] IconColors = ["#737EEB", "#B56ADB", "#8593A6", "#678BE8", "#EC6E8C", "#638CE8",
-        "#AB78D5", "#ED9B58", "#54AFA5", "#6C9BC1", "#8993A3", "#EB995B", "#648CF0"];
+        "#AB78D5", "#ED9B58", "#54AFA5", "#6C9BC1", "#8993A3", "#EB995B", "#648CF0", "#8670C4", "#648CE8"];
     private static readonly string[] Descriptions = ["为你的声音、屏幕与日常操作，设置更顺手的体验。", "让每次唤醒，都有恰到好处的光。",
         "选择最顺手的方式，随时唤醒助手。", "让助手看见你想询问的内容。", "调整输入设备，获得清晰准确的转写。",
         "连接你信任的 AI 服务。", "设置助手如何理解屏幕与图片。", "选择自然的声音和朗读方式。", "在响应速度与资源占用之间，找到适合你的设置。",
-        "管理对话记录与数据的保留方式。", "关于你的 Windows Intelligence。", "让小爱同学连接这台电脑，保留原有语音体验。", "在你允许的范围内，查看 QQ 通知和接收文件的动态。"];
+        "管理对话记录与数据的保留方式。", "关于你的 Windows Intelligence。", "让小爱同学连接这台电脑，保留原有语音体验。", "在你允许的范围内，查看 QQ 通知和接收文件的动态。", "分别管理每段对话，以及由你定义的个人记忆和指令。", "把任务交给指定工具，在你选择的工作空间执行。"];
     private static readonly (string Name, int[] Pages)[] Sections =
     [
         ("", [0]),
-        ("交互", [4, 7, 2, 3, 11, 12]),
-        ("服务与隐私", [5, 6, 9]),
+        ("交互", [14, 4, 7, 2, 3, 11, 12]),
+        ("服务与隐私", [13, 5, 6, 9]),
         ("外观与性能", [1, 8]),
         ("", [10])
     ];
@@ -102,6 +102,7 @@ internal sealed class SettingsWindow : Window
         var search = new TextBox { MinHeight = 34, Padding = new Thickness(10, 6, 8, 6), ToolTip = "搜索设置", Margin = new Thickness(14, 0, 14, 16) };
         System.Windows.Automation.AutomationProperties.SetName(search, "搜索设置");
         search.Style = (Style)FindResource("SettingsSearch");
+        search.Tag = L10n.T("搜索设置");
         WindowChrome.SetIsHitTestVisibleInChrome(search, true);
         DockPanel.SetDock(search, Dock.Top); side.Children.Add(search);
         list.Background = Brushes.Transparent; list.BorderThickness = new Thickness(0); list.Padding = new Thickness(10, 0, 10, 12);
@@ -123,7 +124,7 @@ internal sealed class SettingsWindow : Window
                 glyph.HorizontalAlignment = HorizontalAlignment.Center;
                 var tile = new Border { Child = glyph, Width = 25, Height = 25, CornerRadius = new CornerRadius(7),
                     Background = Ui.Brush(IconColors[index]), Margin = new Thickness(0, 0, 10, 0) };
-                var label = new TextBlock { Text = Pages[index], VerticalAlignment = VerticalAlignment.Center };
+                var label = new TextBlock { Text = L10n.T(Pages[index]), VerticalAlignment = VerticalAlignment.Center };
                 var item = new ListBoxItem { Tag = index, Content = Ui.Row(tile, label), Style = (Style)FindResource("SettingsNavItem") };
                 System.Windows.Automation.AutomationProperties.SetName(item, Pages[index]);
                 list.Items.Add(item);
@@ -134,7 +135,7 @@ internal sealed class SettingsWindow : Window
             string query = search.Text.Trim();
             foreach (var item in list.Items.OfType<ListBoxItem>())
                 item.Visibility = item.Tag is int index
-                    ? (query.Length == 0 || Pages[index].Contains(query, StringComparison.CurrentCultureIgnoreCase) ? Visibility.Visible : Visibility.Collapsed)
+                    ? (query.Length == 0 || Pages[index].Contains(query, StringComparison.CurrentCultureIgnoreCase) || L10n.T(Pages[index]).Contains(query, StringComparison.CurrentCultureIgnoreCase) ? Visibility.Visible : Visibility.Collapsed)
                     : (query.Length == 0 ? Visibility.Visible : Visibility.Collapsed);
         };
         side.Children.Add(list);
@@ -173,6 +174,7 @@ internal sealed class SettingsWindow : Window
             GlassMotion.Reveal(page, model.ReduceMotion, 4, 145);
         };
         Navigate(0);
+        Loaded += (_, _) => L10n.Apply(this);
     }
 
     private void RecognitionPage()
@@ -300,7 +302,7 @@ internal sealed class SettingsWindow : Window
 
     private static Button ActionButton(string title, Action? action = null, bool primary = false)
     {
-        var button = new Button { Content = title, Padding = new Thickness(16, 8, 16, 8), MinHeight = 35,
+        var button = new Button { Content = L10n.T(title), Padding = new Thickness(16, 8, 16, 8), MinHeight = 35,
             Margin = new Thickness(0, 0, 8, 0), Cursor = Cursors.Hand, FontWeight = FontWeights.Medium };
         button.SetResourceReference(StyleProperty, "SettingsButton");
         button.Background = primary ? Accent : Rail;
@@ -314,16 +316,19 @@ internal sealed class SettingsWindow : Window
     private void Render()
     {
         IsRecordingShortcut = false;
-        status.Text = "更改后保存以应用。"; save.Clear(); page.Children.Clear();
+        status.Text = L10n.T("更改后保存以应用。"); save.Clear(); page.Children.Clear();
         string section = Sections.Single(entry => entry.Pages.Contains(tab)).Name;
-        group.Text = section.Length > 0 ? section : "Windows Intelligence";
-        title.Text = Pages[tab];
-        subtitle.Text = Descriptions[tab];
+        group.Text = L10n.T(section.Length > 0 ? section : "Windows Intelligence");
+        title.Text = L10n.T(Pages[tab]);
+        subtitle.Text = L10n.T(Descriptions[tab]);
         switch (tab)
         {
             case 0:
+                var language = new ComboBox { ItemsSource = new[] { "简体中文", "繁體中文", "English" }, SelectedIndex = (int)model.Language, Width = 248 };
+                SettingRow("界面与回复语言", language); save.Add(() => model.Language = (AppLanguage)language.SelectedIndex);
+                Add(Ui.Text("保存后应用语言；原始提问、历史文本和代码不会被改写。",12,Muted));
                 string wakeKey = shortcut?.Active?.ToString() ?? "Copilot 键";
-                Card("语音与屏幕助手", $"短按 {wakeKey} 说话，说完后自动提交。双击静默输入，长按截屏。",
+                Card("语音与屏幕助手", L10n.F("短按 {0} 说话，说完后自动提交。双击静默输入，长按截屏。", "Tap {0} to speak. Double-tap for silent input; hold for a screenshot.", L10n.T(wakeKey)),
                     Ui.Row(ActionButton("开始语音", () => { Hide(); interaction.Start(false); }, true),
                         ActionButton("输入问题", () => { Hide(); interaction.Start(false, typed: true); }),
                         ActionButton("截图提问", () => { Hide(); Dispatcher.InvokeAsync(() => interaction.Start(true)); })));
@@ -334,7 +339,7 @@ internal sealed class SettingsWindow : Window
                 Card("启动与托盘", "登录 Windows 后保持 Copilot 键可用。",
                     Ui.Row(ActionButton("启用开机启动", () => Run(SetStartup(true))), ActionButton("关闭开机启动", () => Run(SetStartup(false)))));
                 Check("显示系统托盘图标（下次启动）", model.Tray, v => model.Tray = v);
-                Card("唤醒快捷键", $"当前使用 {wakeKey}。", ActionButton("更改快捷键", ShowShortcutSettings));
+                Card("唤醒快捷键", L10n.F("当前使用 {0}。", "Currently using {0}.", L10n.T(wakeKey)), ActionButton("更改快捷键", ShowShortcutSettings));
                 break;
             case 1:
                 Check("唤醒时显示屏幕边缘光效", model.Edge, v => model.Edge = v);
@@ -374,7 +379,59 @@ internal sealed class SettingsWindow : Window
                 break;
             case 11: XiaoAIPage(); break;
             case 12: QqPage(); break;
+            case 13: MemoryPage(); break;
+            case 14: DispatchPage(); break;
         }
+    }
+
+    private void MemoryPage()
+    {
+        Card("分开的对话，连续的交流", "应用启动先开新对话；默认在上次交互后 15 分钟内自动续接，超过后新建。也可随时手动新建或选择历史继续。",
+            Ui.Row(ActionButton("查看历史对话", () => interaction.ShowConversations()), ActionButton("开启新对话", () => { interaction.NewConversation(); Hide(); }, true)));
+        Number("连续对话窗口（分钟）", model.Memory.ConversationMinutes, 1, 1440, v => model.Memory.ConversationMinutes = (int)v);
+        Multiline("个人记忆与偏好", model.Memory.Personal, v => model.Memory.Personal = v);
+        Add(Ui.Text("此处由你填写的记忆会随问题发送到当前模型服务；不自动提取历史中的内容。不要填写密码或 API Key。历史最多保留 300 段，每段 100 轮；旧版记录会作为一段历史保留。", 12, Muted));
+        Label("指令匹配规则");
+        Add(Ui.Text("完整匹配触发词，忽略大小写、空格与标点。多个说法用 | 分隔。自定义任务仍使用现有模型和电脑操作权限。", 12, Muted));
+        foreach (var rule in model.Memory.Commands.ToArray())
+        {
+            string[] names = ["DeepSeek 账户查询", "MiniMax 账户查询", "自定义任务"];
+            Check("启用规则 · " + names[Math.Clamp((int)rule.Action, 0, 2)], rule.Enabled, v => rule.Enabled = v);
+            Field("触发说法（用 | 分隔）", rule.Phrases, v => rule.Phrases = v);
+            var action = new ComboBox { ItemsSource = new[] { "查询 DeepSeek 余额", "查询 MiniMax 用量", "交给助手的自定义任务" }.Select(L10n.T).ToArray(), SelectedIndex = (int)rule.Action, Width = 248 };
+            SettingRow("匹配后执行", action); save.Add(() => rule.Action = (RememberedAction)action.SelectedIndex);
+            int labelIndex = page.Children.Count;
+            var task = Box("交给助手的任务", rule.Task); task.Height = 83; task.AcceptsReturn = true; task.TextWrapping = TextWrapping.Wrap;
+            var taskLabel = page.Children[labelIndex];
+            save.Add(() => rule.Task = task.Text.Trim());
+            void ShowTask() { task.Visibility = taskLabel.Visibility = action.SelectedIndex == 2 ? Visibility.Visible : Visibility.Collapsed; }
+            action.SelectionChanged += (_, _) => ShowTask(); ShowTask();
+            Add(ActionButton("删除这条规则", () => Update(() => model.Memory.Commands.Remove(rule))));
+        }
+        Add(ActionButton("添加指令记忆", () => Update(() => model.Memory.Commands.Add(new() { Enabled = false, Action = RememberedAction.AssistantTask }))));
+        Card("MiniMax 账户类型", "普通语音按量账户的现金余额与资源包目前需在官方控制台查询。国际站 Token Plan 有单独的套餐额度接口，订阅 Key 与语音 Key 不通用。",
+            ActionButton("打开 MiniMax 官方控制台", () => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://platform.minimax.cn/") { UseShellExecute = true })));
+        Check("使用 MiniMax 国际站 Token Plan 查询", model.Memory.MiniMaxSubscription, v => model.Memory.MiniMaxSubscription = v);
+        Key(ProviderUsage.MiniMaxPlanCredential, "MiniMax 国际站订阅 Key · Windows 凭据管理器");
+    }
+
+    private void DispatchPage()
+    {
+        Card("选择工具与工作空间", "DeepSeek Harness 和 ChatGPT / Codex 使用本机工作目录；WorkBuddy Cloud 使用远端沙箱，不会自动上传本机文件。",
+            ActionButton("打开任务派发",()=>{interaction.ShowTasks();Hide();},true));
+        string harness=DispatchTools.Harness(model.Dispatch), codex=DispatchTools.Codex(model.Dispatch);
+        Card("DeepSeek Harness",harness.Length>0?harness:L10n.T("未检测到"),Ui.Text("沿用已安装运行时，不修改桌面共享配置。",12,Muted));
+        Field("Harness 命令路径（留空自动检测）",model.Dispatch.HarnessCommand,v=>model.Dispatch.HarnessCommand=v);
+        Check("Harness 复用已配置的官方 DeepSeek 凭据",model.Dispatch.UseDeepSeekCredential,v=>model.Dispatch.UseDeepSeekCredential=v);
+        Add(Ui.Text("凭据只传给本次启动进程，不写入任务内容、日志或 Harness 配置。",12,Muted));
+        Card("ChatGPT / Codex",codex.Length>0?codex:L10n.T("未检测到"),Ui.Text("使用 Codex 官方本地执行入口和已有登录；不冒充普通网页聊天或云端工作区。",12,Muted));
+        Field("Codex 命令路径（留空自动检测）",model.Dispatch.CodexCommand,v=>model.Dispatch.CodexCommand=v);
+        Card("WorkBuddy Cloud", "此电脑未安装 WorkBuddy 也能使用其官方云端任务 API。需要开放平台授权 Access Token，模型 API Key 不通用。",
+            ActionButton("打开 WorkBuddy 授权说明",()=>System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://open.workbuddy.cn/docs/openapi"){UseShellExecute=true})));
+        Key(ExternalTaskRunner.WorkBuddyCredential,"WorkBuddy Access Token · Windows 凭据管理器");
+        Add(Ui.Text("云端接收不等于完成；网络中断不自动重发。关闭作业窗口后本机任务继续，正常退出整个应用会停止本机任务。",12,Muted));
+        foreach(var workspace in model.Dispatch.Workspaces.ToArray())
+            Card(workspace.Name,workspace.Directory,ActionButton("移除此工作空间",()=>Update(()=>model.Dispatch.Workspaces.Remove(workspace))));
     }
 
     private void XiaoAIPage()
@@ -436,8 +493,8 @@ internal sealed class SettingsWindow : Window
         record.Click += (_, _) =>
         {
             IsRecordingShortcut = true;
-            record.Content = "请按下快捷键";
-            selection.Text = "录制中。按 Esc 取消。";
+            record.Content = L10n.T("请按下快捷键");
+            selection.Text = L10n.T("录制中。按 Esc 取消。");
             record.Focus();
         };
         record.LostKeyboardFocus += (_, _) => FinishRecording();
@@ -454,7 +511,7 @@ internal sealed class SettingsWindow : Window
             var candidate = new AssistantShortcut(Keyboard.Modifiers, virtualKey);
             if (!candidate.IsValid)
             {
-                selection.Text = "请按功能键或组合键，例如 Ctrl + Alt + Space。";
+                selection.Text = L10n.T("请按功能键或组合键，例如 Ctrl + Alt + Space。");
                 return;
             }
             shortcutDraft = candidate;
@@ -472,10 +529,10 @@ internal sealed class SettingsWindow : Window
         void FinishRecording()
         {
             IsRecordingShortcut = false;
-            record.Content = "录制快捷键";
+            record.Content = L10n.T("录制快捷键");
             string configured = shortcutDraft?.ToString() ?? "Copilot 键";
             string active = shortcut?.Active?.ToString() ?? "Copilot 键";
-            selection.Text = configured == active ? $"当前使用 {active}" : $"待保存 {configured} · 当前使用 {active}";
+            selection.Text = configured == active ? L10n.F("当前使用 {0}","Currently using {0}",L10n.T(active)) : L10n.F("待保存 {0} · 当前使用 {1}","Pending {0} · Currently using {1}",L10n.T(configured),L10n.T(active));
         }
     }
 
@@ -509,7 +566,7 @@ internal sealed class SettingsWindow : Window
     private void TtsPage()
     {
         var provider = model.TtsProvider;
-        Choose("朗读模式", ["关闭", "本地 Kokoro", "自定义 API", "ElevenLabs", "MiniMax（HD → Turbo）"], (int)model.Tts, v => model.Tts = (TtsMode)v);
+        Choose("朗读模式", ["关闭朗读", "本地 Kokoro", "自定义 API", "ElevenLabs", "MiniMax（HD → Turbo）"], (int)model.Tts, v => model.Tts = (TtsMode)v);
         Check("自动朗读回复", model.AutoSpeak, v => model.AutoSpeak = v);
         Check("助手打开时播放提示音", model.Cue, v => model.Cue = v);
         Number("语速", model.TtsSpeed, .5, 2, v => model.TtsSpeed = v);
@@ -540,7 +597,7 @@ internal sealed class SettingsWindow : Window
         string endpoint;
         try { endpoint = AiEndpoint.Create(model.Provider.BaseUrl).Authority; }
         catch (UserError) { endpoint = "当前服务地址无效"; }
-        Card("截图发送授权", $"截图可能包含私人信息。手动发送时可先预览与遮挡。启用自动发送后，主动截图会发送到 {endpoint}。",
+        Card("截图发送授权", L10n.F("截图可能包含私人信息。手动发送时可先预览与遮挡。启用自动发送后，主动截图会发送到 {0}。", "Screenshots may contain private information. Preview and redact before sending. Authorized automatic captures are sent to {0}.",endpoint),
             Ui.Row(ActionButton("同意向此服务自动发送", () => Update(() => model.ScreenshotConsent = model.DestinationKey), true),
                 ActionButton("撤销授权", () => Update(() => { model.ScreenshotConsent = null; interaction.ClearImages(); }))));
         Add(Ui.Row(ActionButton("清除图片上下文", () => { interaction.ClearImages(); status.Text = "已清除图片上下文。"; }),
@@ -557,10 +614,7 @@ internal sealed class SettingsWindow : Window
 
     private void ShowHistory()
     {
-        var history = new Window { Owner = this, Title = "Windows Intelligence · 历史", Width = 680, Height = 560,
-            Content = new TextBox { Text = interaction.HistoryText, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
-                Background = Canvas, Foreground = Ink, Padding = new Thickness(18), FontSize = 15, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } };
-        history.Show();
+        interaction.ShowConversations();
     }
 
     private void Providers<T>(IReadOnlyList<T> items, Func<T, string> name, T active, Action<T> select, Action add)
@@ -670,7 +724,7 @@ internal sealed class SettingsWindow : Window
 
     private void Choose(string title, string[] options, int index, Action<int> set)
     {
-        var box = new ComboBox { ItemsSource = options, SelectedIndex = Math.Clamp(index, 0, options.Length - 1), Width = 248 };
+        var box = new ComboBox { ItemsSource = options.Select(L10n.T).ToArray(), SelectedIndex = Math.Clamp(index, 0, options.Length - 1), Width = 248 };
         System.Windows.Automation.AutomationProperties.SetName(box, title);
         SettingRow(title, box); save.Add(() => set(box.SelectedIndex));
     }
@@ -704,6 +758,7 @@ internal sealed class SettingsWindow : Window
             else
             {
                 foreach (var update in save) update();
+                CommandMemory.Validate(model.Memory);
                 if (model.XiaoAI.OfficialEnabled)
                 {
                     _ = XiaoAIRelayClient.BaseAddress(model.XiaoAI.RelayUrl);
@@ -714,7 +769,12 @@ internal sealed class SettingsWindow : Window
                 model.Save();
                 interaction.ApplyIntegrations();
             }
-            status.Text = "设置已保存。";
+            if (L10n.Language != model.Language)
+            {
+                L10n.Language = model.Language;
+                Render(); L10n.Apply(this); interaction.ApplyLanguage();
+            }
+            status.Text = L10n.T("设置已保存。");
             return true;
         }
         catch (Exception ex) { status.Text = ex.Message; return false; }

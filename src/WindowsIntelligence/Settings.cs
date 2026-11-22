@@ -40,6 +40,9 @@ internal sealed class TtsProviderSettings
 
 internal sealed class Settings
 {
+    public DispatchSettings Dispatch { get; set; } = new();
+    public AppLanguage Language { get; set; }
+    public MemorySettings Memory { get; set; } = new();
     public QqDetectionSettings QQ { get; set; } = new();
     public XiaoAISettings XiaoAI { get; set; } = new();
     public List<ProviderSettings> Providers { get; set; } = [new()];
@@ -91,6 +94,13 @@ internal sealed class Settings
         {
             var settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new();
             settings.XiaoAI ??= new();
+            settings.Dispatch ??= new();
+            settings.Dispatch.Workspaces ??= [];
+            settings.Memory ??= new();
+            settings.Memory.Commands ??= [];
+            settings.Memory.Personal ??= "";
+            settings.Memory.Commands = settings.Memory.Commands.Where(c => c is not null).ToList();
+            foreach (var rule in settings.Memory.Commands) { rule.Phrases ??= ""; rule.Task ??= ""; }
             settings.QQ ??= new();
             if (settings.Providers.Count == 0) settings.Providers.Add(new());
             if (settings.TtsProviders.Count == 0) settings.TtsProviders.Add(new());

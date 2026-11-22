@@ -27,6 +27,7 @@ internal sealed class Interaction : IDisposable
         public bool DraftAnswer, HoldResults, FromSpeaker;
         public bool Ready, Sending, Failed, Editing, CaptureFailed, VoiceFailed, VoicePending, AutomaticSubmissionPending;
         public volatile bool SpeechStarted;
+        public Conversation? Conversation;
         public Guid Id => State?.RequestId ?? TextId;
     }
 
@@ -45,7 +46,10 @@ internal sealed class Interaction : IDisposable
     private readonly Func<SpeechPipeline, CancellationToken, Task>? playSpeech;
     private readonly SemaphoreSlim captureLock = new(1);
     private readonly SemaphoreSlim micLock = new(1);
-    private readonly List<AiTurn> history;
+    internal Conversations Conversations { get; }
+    private List<AiTurn> history => current?.Conversation?.Turns ?? Conversations.Active?.Turns ?? [];
+    private readonly ProviderUsage usage;
+    internal TaskDispatch Tasks { get; }
     private CancellationTokenSource? previewSpeech;
     private Session? current;
     private float audioLevel;
@@ -55,13 +59,16 @@ internal sealed class Interaction : IDisposable
     public Interaction(Settings settings, Dispatcher dispatcher, Overlay overlay, Caption caption, AiClient? ai = null,
         Func<Action<string>, CancellationToken, Task<string>>? captureSpeech = null,
         Func<string, CancellationToken, Task<NAudio.Wave.WaveStream?>>? synthesizeSpeech = null,
-        Func<SpeechPipeline, CancellationToken, Task>? playSpeech = null, bool startIntegrations = true)
+        Func<SpeechPipeline, CancellationToken, Task>? playSpeech = null, bool startIntegrations = true,
+        Conversations? conversations = null, ProviderUsage? usage = null)
     {
         this.settings = settings; this.dispatcher = dispatcher; this.overlay = overlay; this.caption = caption;
         this.ai = ai ?? new();
         this.captureSpeech = captureSpeech;
         this.synthesizeSpeech = synthesizeSpeech; this.playSpeech = playSpeech;
-        history = LoadHistory();
+        Conversations = conversations ?? new(Settings.DirectoryPath, () => settings.SaveTextHistory);
+        this.usage = usage ?? new();
+        Tasks = new(settings);
         var remoteActions = new XiaoAIWindowsActions(settings.XiaoAI,AskXiaoAIAsync);
         XiaoAI = new(settings.XiaoAI,remoteActions.ExecuteAsync);
         OfficialXiaoAI = new(settings, this);
@@ -70,14 +77,34 @@ internal sealed class Interaction : IDisposable
         caption.Cancel += () => Cancel(animate: true);
         caption.Speak += StartVoiceFromPanel;
         caption.FollowUp += FollowUp;
+        caption.NewConversation += () => NewConversation();
+        caption.History += () => ShowConversations();
+        caption.DispatchTask += ShowTasks;
         caption.Retry += () => Run(RetryAsync());
         caption.OpenImage += () => Run(EditAsync(false));
         overlay.Place += (screen, scale) => { overlay.Energy = Volatile.Read(ref audioLevel); caption.Place(screen, scale); };
         if (captureSpeech is null) _ = Task.Run(() => { try { recognition.Prepare(); } catch (Exception) { } });
     }
 
-    public string HistoryText => string.Join("\n\n", history.Select(t => $"你\n{t.Text}\n\nWindows Intelligence\n{t.Answer}"));
-    private static string HistoryFile => Path.Combine(Settings.DirectoryPath, "history.json");
+    public string HistoryText => string.Join("\n\n", Conversations.Items.Where(c => c.Turns.Count > 0).Select(c =>
+        c.Title + "\n" + c.UpdatedAt.ToLocalTime().ToString("g") + "\n\n" + string.Join("\n\n", c.Turns.Select(t => $"你\n{t.Text}\n\nWindows Intelligence\n{t.Answer}"))));
+
+    public void NewConversation() { Conversations.Begin(settings.Memory.ConversationMinutes, force: true); Start(false, typed: true, silent: true); }
+    public void ResumeConversation(Guid id)
+    {
+        Cancel();
+        if (!Conversations.Select(id)) return;
+        Start(false, typed: true, silent: true);
+        if (current is { } session && session.Conversation?.Turns.LastOrDefault() is { } turn)
+        { session.Input = turn.Text; session.Answer = turn.Answer; session.Status = "回复完成"; Refresh(session); }
+    }
+    public void ShowConversations() => new ConversationWindow(this).Show();
+    public void ShowTasks(string draft = "")
+    {
+        if(string.IsNullOrWhiteSpace(draft))draft=current?.VoiceDraft.Length>0?current.VoiceDraft:current?.Input??"";
+        Cancel(); new TaskDispatchWindow(settings,this,draft).Show();
+    }
+    internal void ApplyLanguage() => caption.ApplyLanguage();
 
     internal void ApplyIntegrations()
     {
@@ -150,6 +177,7 @@ internal sealed class Interaction : IDisposable
         nint foreground = Desktop.GetForegroundWindow();
         Cancel();
         var session = current = new Session(screen, capture, canAutoSend, silent);
+        session.Conversation = Conversations.Begin(settings.Memory.ConversationMinutes);
         session.VoicePending = !typed && !silent && settings.MicrophoneEnabled && (!capture || held || !settings.Strict);
         caption.ReduceMotion = settings.ReduceMotion;
         caption.Silent = session.Silent;
@@ -347,6 +375,11 @@ internal sealed class Interaction : IDisposable
         overlay.SetActive(session.Screen);
         Refresh(session);
         var token = session.Life.Token;
+        if (session.Image is null && !session.FromSpeaker && DispatchIntent.Parse(session.Input) is { } dispatch)
+        {
+            await DispatchFromAssistantAsync(session, dispatch, token);
+            return;
+        }
         using var speechCancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
         bool speak = !session.Silent && settings.AutoSpeak && settings.Tts != TtsMode.Disabled;
         session.HoldResults = speak;
@@ -360,12 +393,16 @@ internal sealed class Interaction : IDisposable
         {
             var image = session.Image is { } bitmap ? await Task.Run(() => ScreenCapture.Encode(bitmap, settings.ImageFormat, settings.JpegQuality, settings.MaxImageSide), token) : null;
             if (!IsCurrent(session)) return;
-            var request = MultimodalRequestBuilder.Build(session.Id, settings, session.Input, image, history);
+            var remembered = image is null ? CommandMemory.Match(session.Input, settings.Memory) : null;
+            bool nativeQuery = remembered is { Action: RememberedAction.DeepSeekUsage or RememberedAction.MiniMaxUsage };
+            string input = remembered is { Action: RememberedAction.AssistantTask } ? remembered.Task + "\n\n用户原始表达：" + session.Input : session.Input;
+            var request = nativeQuery ? new AiRequest(session.Id, settings.Provider, "", session.Input, null, [], DateTimeOffset.UtcNow, settings.ImageDetail)
+                : MultimodalRequestBuilder.Build(session.Id, settings, input, image, session.Conversation!.Turns);
             var key = SecretStore.Get(request.Provider.Id);
             session.Journal = new(key);
             voice?.Start(segments!.Reader, speechCancellation.Token);
             if (settings.Cue && !session.Silent) Cues.Loop(Cues.Cue.Wait);
-            var answer = await ai.ReplyAsync(request, key, delta =>
+            void Receive(string delta)
             {
                 sentences?.Add(delta);
                 pending.Append(delta);
@@ -379,7 +416,15 @@ internal sealed class Interaction : IDisposable
                     session.Status = "正在接收回复";
                     Refresh(session);
                 });
-            }, token, settings.PowerShellEnabled && session.State is null
+            }
+            string answer;
+            if (nativeQuery)
+            {
+                session.Status = "正在查询官方账户信息"; Refresh(session);
+                answer = await usage.QueryAsync(remembered!.Action, settings, token);
+                Receive(answer);
+            }
+            else answer = await ai.ReplyAsync(request, key, Receive, token, settings.PowerShellEnabled && session.State is null
                 ? (command, ct) => RunPowerShellAsync(session, command, ct)
                 : null, activity =>
                 {
@@ -414,14 +459,12 @@ internal sealed class Interaction : IDisposable
             Cues.Stop();
             if (settings.Cue && !session.Silent) Cues.Play(Cues.Cue.Done);
             doneCue = true;
-            string historyPrompt = image is null ? request.Text : $"[截图] {request.Text}";
+            string historyPrompt = image is null ? session.Input : $"[截图] {request.Text}";
             if (settings.ImageHistory && AutoApproved(session))
             {
-                for (int i = 0; i < history.Count; i++) history[i] = history[i] with { Image = null };
+                Conversations.ClearImages();
             }
-            history.Add(new AiTurn(historyPrompt, answer, settings.ImageHistory && AutoApproved(session) ? image : null));
-            if (history.Count > 50) history.RemoveAt(0);
-            SaveHistory();
+            Conversations.Add(session.Conversation!, new AiTurn(historyPrompt, answer, settings.ImageHistory && AutoApproved(session) ? image : null));
             Refresh(session);
             if (voice is not null)
             {
@@ -455,6 +498,55 @@ internal sealed class Interaction : IDisposable
             try { await playback; } catch { }
             session.Sending = false;
             session.Ready = session.Failed;
+            if (IsCurrent(session)) Refresh(session);
+        }
+    }
+
+    private async Task DispatchFromAssistantAsync(Session session, DispatchIntent intent, CancellationToken token)
+    {
+        try
+        {
+            session.Status = "请选择项目或对话";
+            overlay.Dismiss();
+            Refresh(session);
+            var selection = await caption.PickDispatchAsync(settings, intent, session.Screen, overlay.ScaleFor(session.Screen), token);
+            token.ThrowIfCancellationRequested();
+            if (selection is null)
+            {
+                session.Status = "未派发任务";
+                return;
+            }
+
+            Guid jobId = Tasks.SubmitSelected(intent, selection);
+            var project = selection.Project;
+            if (!settings.Dispatch.Workspaces.Any(w => w.Directory.Equals(project.Directory, StringComparison.OrdinalIgnoreCase)))
+            {
+                settings.Dispatch.Workspaces.Add(project);
+                if (settings.Dispatch.Workspaces.Count > 30) settings.Dispatch.Workspaces.RemoveAt(0);
+                try { settings.Save(); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+            string tool = intent.Target == DispatchTarget.DeepSeekHarness ? "DeepSeek Harness" : "ChatGPT / Codex";
+            string conversation = selection.Thread is { Title.Length: > 0 } destination ? destination.Title : L10n.T(selection.Thread is null ? "新建对话" : "未命名对话");
+            string receipt = L10n.F("已排队发送给 {0}\n项目：{1}  ·  对话：{2}", "Queued for {0}\nProject: {1}  ·  Chat: {2}", tool, project.Name, conversation);
+            session.Answer = TaskDispatch.Redact(receipt);
+            session.Status = "任务已派发，可在作业列表查看进度";
+            Refresh(session);
+            var job = await Tasks.WaitForResultAsync(jobId, token);
+            if (!IsCurrent(session) || job is null) return;
+            session.Status = DispatchJob.StateName(job.State);
+            session.Answer += "\n\n" + job.Result;
+            Conversations.Add(session.Conversation!, new AiTurn(session.Input, session.Answer, null));
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (IsCurrent(session)) Fail(session, Format(ex));
+        }
+        finally
+        {
+            session.Sending = false;
+            session.Ready = true;
             if (IsCurrent(session)) Refresh(session);
         }
     }
@@ -593,34 +685,13 @@ internal sealed class Interaction : IDisposable
     private void Run(Task task) => Ui.Observe(task, ex => { if (current is { } session) Fail(session, Format(ex)); });
     private static string Format(Exception ex) => ex is UserError ? ex.Message : $"操作失败 (0x{ex.HResult:X8})。";
 
-    private List<AiTurn> LoadHistory()
-    {
-        if (!settings.SaveTextHistory || !File.Exists(HistoryFile)) return [];
-        try { return JsonSerializer.Deserialize<List<AiTurn>>(File.ReadAllText(HistoryFile)) ?? []; }
-        catch (IOException) { return []; }
-        catch (JsonException) { return []; }
-    }
-
     public void ClearImages()
     {
-        for (int i = 0; i < history.Count; i++) history[i] = history[i] with { Image = null };
+        Conversations.ClearImages();
         if (current is { Image: not null }) Cancel();
     }
 
-    public void ClearHistory() { history.Clear(); File.Delete(HistoryFile); }
-
-    private void SaveHistory()
-    {
-        if (!settings.SaveTextHistory) return;
-        try
-        {
-            Directory.CreateDirectory(Settings.DirectoryPath);
-            var temp = HistoryFile + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(history.Select(x => x with { Image = null })));
-            File.Move(temp, HistoryFile, true);
-        }
-        catch (IOException) { }
-    }
+    public void ClearHistory() { Cancel(); Conversations.Clear(); Tasks.ClearHistory(); }
 
     internal Task ResourceDisposal { get; private set; } = Task.CompletedTask;
 
@@ -629,6 +700,7 @@ internal sealed class Interaction : IDisposable
         if (disposed) return;
         disposed = true;
         integrationLife.Cancel(); OfficialXiaoAI.Dispose(); QQ.Dispose();
+        Tasks.Dispose();
         Cancel();
         ResourceDisposal = Task.Run(ReleaseSpeechResourcesAsync);
     }

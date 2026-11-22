@@ -18,7 +18,7 @@ internal static class OverlayUi
     {
         var window = new Window
     {
-        Title = name, WindowStyle = WindowStyle.None, AllowsTransparency = true, Background = Brushes.Transparent,
+        Title = L10n.T(name), WindowStyle = WindowStyle.None, AllowsTransparency = true, Background = Brushes.Transparent,
         ShowInTaskbar = false, Topmost = true, ShowActivated = focus, ResizeMode = ResizeMode.NoResize,
         SizeToContent = SizeToContent.WidthAndHeight, UseLayoutRounding = true, FontFamily = Ui.Body
     };
@@ -86,9 +86,10 @@ internal sealed class Caption : IDisposable
     private BitmapSource? image;
     private string markdown = "";
     private bool readyForFollowUp;
+    private bool listeningNow;
     private int lastX = int.MinValue, lastY = int.MinValue;
-    public event Action<string>? Submit, FollowUp;
-    public event Action? Cancel, Retry, OpenImage, Speak;
+    public event Action<string>? Submit, FollowUp, DispatchTask;
+    public event Action? Cancel, Retry, OpenImage, Speak, NewConversation, History;
     public bool ReduceMotion { get; set; }
     public bool Silent { get; set; }
     private const int EscapeHotKey = 0x4312;
@@ -98,6 +99,7 @@ internal sealed class Caption : IDisposable
 
     public Caption()
     {
+        L10n.Preserve(subtitle);
         var windowTransform = new TransformGroup();
         windowTransform.Children.Add(windowScale);
         windowTransform.Children.Add(windowSlide);
@@ -142,7 +144,7 @@ internal sealed class Caption : IDisposable
         prompt.BorderThickness = new Thickness(0);
         prompt.Padding = new Thickness(0);
         prompt.TextChanged += (_, _) => UpdateAction();
-        System.Windows.Automation.AutomationProperties.SetName(prompt, "输入问题");
+        System.Windows.Automation.AutomationProperties.SetName(prompt, L10n.T("输入问题"));
         prompt.KeyDown += (_, e) =>
         {
             if (e.Key != Key.Enter || prompt.IsReadOnly) return;
@@ -197,6 +199,9 @@ internal sealed class Caption : IDisposable
         thumbnailButton.Margin = new Thickness(0, 0, 0, 8);
         thumbnailButton.Padding = new Thickness(0);
         var footer = Ui.Row(PanelButton("关闭", () => Cancel?.Invoke()), retry, read, send);
+        var conversations = Ui.Row(PanelButton("新对话", () => NewConversation?.Invoke()), PanelButton("历史对话", () => History?.Invoke()), PanelButton("派发任务", () => DispatchTask?.Invoke(prompt.Text)));
+        conversations.Margin = new Thickness(7, 7, 0, 0);
+        root.Children.Add(conversations);
         foreach (var item in new UIElement[] { phase, thumbnailButton, subtitle, execution, response, privacy, footer })
             content.Children.Add(item);
         window.PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) { Cancel?.Invoke(); e.Handled = true; } };
@@ -213,13 +218,14 @@ internal sealed class Caption : IDisposable
         IReadOnlyList<ExecutionStep>? steps = null)
     {
         bool listening = status == "正在聆听";
-        phase.Text = status;
+        listeningNow = listening;
+        phase.Text = L10n.T(status);
         phase.Visibility = status.Length == 0 || status == "输入问题" || listening ? Visibility.Collapsed : Visibility.Visible;
         bool completed = status.StartsWith("回复完成", StringComparison.Ordinal);
         if (completed && !readyForFollowUp) prompt.Clear();
         readyForFollowUp = completed;
-        placeholder.Text = listening ? "正在聆听…" : completed ? Silent ? "继续提问 · 静默" : "继续提问"
-            : canSend || status.Length == 0 ? Silent ? "输入问题 · 静默" : "输入问题" : "正在处理…";
+        placeholder.Text = L10n.T(listening ? "正在聆听…" : completed ? Silent ? "继续提问 · 静默" : "继续提问"
+            : canSend || status.Length == 0 ? Silent ? "输入问题 · 静默" : "输入问题" : "正在处理…");
         prompt.IsReadOnly = !canSend && !completed;
         UpdateAction();
         subtitle.Text = input;
@@ -272,14 +278,14 @@ internal sealed class Caption : IDisposable
     {
         bool hasText = !string.IsNullOrWhiteSpace(prompt.Text);
         placeholder.Visibility = prompt.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-        bool canRun = !prompt.IsReadOnly && (hasText || !Silent && phase.Text != "正在聆听");
+        bool canRun = !prompt.IsReadOnly && (hasText || !Silent && !listeningNow);
         string label = hasText ? "发送问题" : Silent ? "静默模式" : "开始语音输入";
         microphone.IsEnabled = canRun;
         actionGlyph.Data = hasText ? SendGlyph : Silent ? MuteGlyph : MicGlyph;
         actionGlyph.Stroke = hasText ? Brushes.White : ActionInk;
         microphone.Background = hasText ? SendFill : Silent ? ActionFill : Brushes.Transparent;
-        microphone.ToolTip = label;
-        System.Windows.Automation.AutomationProperties.SetName(microphone, label);
+        microphone.ToolTip = L10n.T(label);
+        System.Windows.Automation.AutomationProperties.SetName(microphone, L10n.T(label));
     }
 
     private nint EscapeMessage(nint hwnd, int message, nint id, nint key, ref bool handled)
@@ -341,6 +347,7 @@ internal sealed class Caption : IDisposable
     }
 
     public void ResetPrompt() => prompt.Clear();
+    internal void ApplyLanguage() { L10n.Apply(window); UpdateAction(); }
     public void Show()
     {
         if (window.IsVisible && !closing) return;
@@ -359,6 +366,8 @@ internal sealed class Caption : IDisposable
         else ResetMotion();
     }
     public void FocusPrompt() { window.Activate(); prompt.Focus(); }
+    internal Task<DispatchSelection?> PickDispatchAsync(Settings settings, DispatchIntent intent, Screen screen, double scale, CancellationToken cancellation) =>
+        new DispatchPicker(settings, intent, window, screen, scale).ShowAsync(cancellation);
     public void Hide(bool animate = false)
     {
         reader?.Close();
@@ -436,7 +445,7 @@ internal sealed class Caption : IDisposable
         readerContent = view;
         reader = new Window
         {
-            Title = "Windows Intelligence · 回复", Width = 690, Height = 610,
+            Title = L10n.T("Windows Intelligence · 回复"), Width = 690, Height = 610,
             WindowStartupLocation = WindowStartupLocation.CenterOwner, Owner = window,
             Content = view, Background = Ui.Brush("#F8F5FC"), Topmost = true
         };

@@ -16,11 +16,13 @@ internal sealed partial class AppHost
     private Interaction interaction = null!;
     private SettingsWindow? window;
     private Forms.NotifyIcon? tray;
+    private Action? languageChanged;
 
     partial void Initialize(Application application)
     {
         app = application;
         settings = Settings.Load();
+        L10n.Language = settings.Language;
         try { shortcut.Apply(settings.Shortcut); }
         catch (UserError) { } // An unavailable shortcut leaves the Copilot key active.
         overlay = new Overlay(settings);
@@ -32,6 +34,9 @@ internal sealed partial class AppHost
         menu.Items.Add("开始语音", null, (_, _) => interaction.Start(false));
         menu.Items.Add("输入问题", null, (_, _) => interaction.Start(false, typed: true));
         menu.Items.Add("截图提问", null, (_, _) => interaction.Start(true));
+        menu.Items.Add("新对话", null, (_, _) => interaction.NewConversation());
+        menu.Items.Add("历史对话", null, (_, _) => interaction.ShowConversations());
+        menu.Items.Add("派发任务", null, (_, _) => interaction.ShowTasks());
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("唤醒快捷键", null, (_, _) => { ShowSettings(); window?.ShowShortcutSettings(); });
         menu.Items.Add("设置", null, (_, _) => ShowSettings());
@@ -45,6 +50,10 @@ internal sealed partial class AppHost
             ContextMenuStrip = menu,
         };
         tray.DoubleClick += (_, _) => ShowSettings();
+        foreach (Forms.ToolStripItem item in menu.Items) item.Tag=item.Text;
+        languageChanged = () => { foreach(Forms.ToolStripItem item in menu.Items) if(item.Tag is string label) item.Text=L10n.T(label); };
+        L10n.Changed += languageChanged;
+        languageChanged();
     }
 
     private void ShowSettings()
@@ -75,6 +84,7 @@ internal sealed partial class AppHost
 
     partial void Shutdown()
     {
+        if(languageChanged is not null) L10n.Changed -= languageChanged;
         window?.Close();
         tray?.Dispose();
         interaction.Dispose();

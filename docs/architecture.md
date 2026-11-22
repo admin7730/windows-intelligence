@@ -65,3 +65,7 @@ flowchart LR
 `QqDetection` 在用户选择的目录检测稳定可读文件元数据，并在明确授权后读取 Windows QQ 通知。不会解密聊天数据库或执行通知内容；通知不代表完整聊天记录。默认不允许音箱读取检测结果。
 
 官方技能与 QQ 帐号尚未完成真机验收；普通原生小爱对话不会被监听或接管，耗时任务当前需要在技能中查询结果。详见[接入说明](../integrations/xiaoai/README.md)。
+
+## 本机任务派发
+
+`DispatchIntent` 在普通助手输入中识别明确的派发请求。`DispatchPicker` 读取项目与对话列表并让用户确认目的地。`DispatchCatalog` 使用 Codex App Server 的 `thread/list` 和 Harness 的本机会话摘要。`TaskDispatch` 管理任务队列、状态及可选历史。`ExternalTaskRunner` 将任务作为标准输入交给目标工具，使用原生会话 ID 继续对话。具体范围见 [0.2.48 更新说明](UPDATE_0.2.48.md)。

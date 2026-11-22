@@ -37,10 +37,49 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        if(Environment.GetEnvironmentVariable("WI_DISPATCH_FIXTURE")=="1" && args.FirstOrDefault() is "exec" or "headless" or "app-server")return DispatchTests.Fixture(args);
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         application.Startup += async (_, _) =>
         {
+            if (args.Contains("--dispatch-picker"))
+            {
+                await Check("Voice dispatch picker routes to an existing native chat", DispatchTests.PickerFlowAsync);
+                application.Shutdown(failed == 0 ? 0 : 1);
+                return;
+            }
+            if (args.Contains("--dispatch-catalog-live"))
+            {
+                await Check("Live local native catalogs and exact session continuation", DispatchTests.NativeCatalogAsync);
+                application.Shutdown(failed == 0 ? 0 : 1);
+                return;
+            }
+            if(args.Contains("--dispatch") || args.Contains("--dispatch-live"))
+            {
+                if(args.Contains("--dispatch"))await Check("External task dispatch",DispatchTests.RunAsync);
+                else
+                {
+                    await Check("Live Harness dispatch",()=>DispatchTests.LiveAsync(DispatchTarget.DeepSeekHarness));
+                    await Check("Live ChatGPT/Codex dispatch",()=>DispatchTests.LiveAsync(DispatchTarget.ChatGptCodex));
+                }
+                application.Shutdown(failed==0?0:1);return;
+            }
+            if (args.Contains("--provider-usage-live"))
+            {
+                await Check("Configured DeepSeek official balance query", async () =>
+                {
+                    using var ct=new CancellationTokenSource(TimeSpan.FromSeconds(25));
+                    string result=await new ProviderUsage().QueryAsync(RememberedAction.DeepSeekUsage,Settings.Load(),ct.Token);
+                    Require(result.Contains("DeepSeek") && result.Contains("user/balance"),"official balance response missing");
+                    Console.WriteLine("Authenticated balance response parsed. Account amounts and keys are not printed.");
+                });
+                application.Shutdown(failed==0?0:1);return;
+            }
+            if (args.Contains("--conversations"))
+            {
+                await Check("Conversations, memory rules and official provider usage", ConversationTests.RunAsync);
+                application.Shutdown(failed == 0 ? 0 : 1); return;
+            }
             if (args.Contains("--official-xiaoai"))
             {
                 await Check("Official XiaoAI bridge and QQ local detection", OfficialXiaoAITests.RunAsync);
